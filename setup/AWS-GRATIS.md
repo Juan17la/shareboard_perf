@@ -134,6 +134,8 @@ Instala `git`, `tmux` y Node 22, clona el repo y arranca el laboratorio con la i
 
 ### 6.3 Si prefieres hacerlo a mano
 
+Guías completas paso a paso, con los problemas que ya aparecieron y su solución: [EC2-SERVIDOR.md](EC2-SERVIDOR.md) y [EC2-GENERADOR.md](EC2-GENERADOR.md). Resumen:
+
 Los mismos pasos sin el script:
 
 ```bash

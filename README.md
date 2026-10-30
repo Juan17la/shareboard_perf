@@ -12,7 +12,7 @@ Mide CPU (total, por núcleo y por hilo), memoria residente, disco (IOPS y MB/s)
 | `servidor/` | Copia exacta del servidor Shareboard que se midió (en el PC de desarrollo se usa `../server`) |
 | `envs/` | Docker Compose de MongoDB y del servidor en contenedor con límites |
 | `resultados/` | Corridas oficiales (`.ndjson`) y sus tablas |
-| `setup/` | Guías: [laboratorio local](setup/SETUP.md) y [AWS con capa gratuita](setup/AWS-GRATIS.md) |
+| `setup/` | Guías: [laboratorio local](setup/SETUP.md), [AWS con capa gratuita](setup/AWS-GRATIS.md), instalación a mano del [servidor](setup/EC2-SERVIDOR.md) y del [generador](setup/EC2-GENERADOR.md) en EC2 |
 | `PLAN.md`, `INVESTIGACION-CARGA.md`, `PRUEBAS.md` | Plan, investigación de la carga y protocolo de pruebas |
 
 ## Uso rápido

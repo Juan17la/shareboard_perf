@@ -11,7 +11,9 @@ async function call(target, method, path, body, token) {
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(60_000),
   });
-  return { status: res.status, json: await res.json().catch(() => ({})) };
+  const json = await res.json().catch(() => ({}));
+  // Los errores del servidor vienen como { error: { code, message } }.
+  return { status: res.status, json, code: json.error?.code, message: json.error?.message };
 }
 
 /** ¿La semilla guardada sigue existiendo en esta base de datos? */
@@ -43,8 +45,8 @@ export async function makeSeed(target, file, users, log) {
   await pool(users, async (i) => {
     const username = `lt${String(i).padStart(4, '0')}`;
     let r = await call(target, 'POST', '/auth/register', { username, email: `${username}@carga.test`, password: PASSWORD, nickname: `vu${i}` });
-    if (r.json.code === 'USERNAME_TAKEN' || r.json.code === 'EMAIL_TAKEN') r = await call(target, 'POST', '/auth/login', { login: username, password: PASSWORD });
-    if (!r.json.token) throw new Error(`${username}: ${r.status} ${r.json.code ?? ''} ${r.json.message ?? ''}`);
+    if (r.code === 'USERNAME_TAKEN' || r.code === 'EMAIL_TAKEN') r = await call(target, 'POST', '/auth/login', { login: username, password: PASSWORD });
+    if (!r.json.token) throw new Error(`${username}: ${r.status} ${r.code ?? ''} ${r.message ?? ''}`);
     accounts[i] = { username, id: r.json.account.id, token: r.json.token };
   });
   const boards = new Array(users);
@@ -52,7 +54,7 @@ export async function makeSeed(target, file, users, log) {
   await pool(users, async (j) => {
     const acc = accounts[j];
     const r = await call(target, 'POST', '/boards', { name: `carga ${j}`, access: 'public', editPolicy: 'everyone', creatorId: acc.id }, acc.token);
-    if (!r.json.id) throw new Error(`tablero ${j}: ${r.status} ${r.json.code ?? ''}`);
+    if (!r.json.id) throw new Error(`tablero ${j}: ${r.status} ${r.code ?? ''}`);
     boards[j] = r.json.id;
   });
   const seed = { target, createdAt: new Date().toISOString(), password: PASSWORD, accounts: accounts.map(({ username, id }) => ({ username, id })), boards };

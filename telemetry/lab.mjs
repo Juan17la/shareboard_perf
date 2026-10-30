@@ -101,7 +101,9 @@ function duration(p, quick) {
 
 // ---------- objetivo activo: este PC o un lab remoto (--target-only) ----------
 function remoteCall(path, opts = {}) {
-  return fetch(`http://${state.remote.host}:${args.port}${path}`, { ...opts, headers: { 'x-token': state.remote.token, 'content-type': 'application/json' }, signal: AbortSignal.timeout(opts.timeout ?? 10_000) }).then(async (r) => {
+  // "ip" o "ip:puerto" (el puerto del laboratorio remoto; por defecto el mismo de este).
+  const [h, p = args.port] = state.remote.host.split(':');
+  return fetch(`http://${h}:${p}${path}`, { ...opts, headers: { 'x-token': state.remote.token, 'content-type': 'application/json' }, signal: AbortSignal.timeout(opts.timeout ?? 10_000) }).then(async (r) => {
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
     return body;
@@ -109,7 +111,7 @@ function remoteCall(path, opts = {}) {
 }
 function active() {
   if (state.mode === 'remote') {
-    const h = state.remote.host;
+    const h = state.remote.host.split(':')[0];
     return { env: `nube-${h}`, serverUrl: `http://${h}:${SERVER_PORT}`, agentUrl: `http://${h}:${AGENT_PORT}`, token: state.remote.token, seed: () => remoteSeed, restart: () => remoteCall('/api/target/restart', { method: 'POST', timeout: 120_000 }) };
   }
   return { env: MODES[state.mode].env, serverUrl: local.serverUrl, agentUrl: local.agentUrl, token, seed: local.seed, restart: local.restartServer };
@@ -353,8 +355,8 @@ server.on('error', async (err) => {
 server.listen(Number(args.port), host, async () => {
   if (targetOnly) {
     writeFileSync(join(DATA, 'token.txt'), token + '\n');
-    log(`Laboratorio remoto en :${args.port}. Token: ${token}  (guardado en analitics/data/token.txt)`);
-    log('Abre los puertos 3000, 7070 y 7071 a tu IP en el security group.');
+    log(`Laboratorio remoto en :${args.port}. Token: ${token}  (guardado en data/token.txt)`);
+    log('El generador debe alcanzar los puertos 3000, 7070 y 7071 de esta máquina (mismo security group).');
     await prepare(args.mode);
     if (state.ready) log(`Listo. En el PC elige "Nube", pon esta IP y el token ${token}`);
   } else {

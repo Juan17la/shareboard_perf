@@ -85,7 +85,7 @@ async function http(kind, method, path, body, token) {
     if (res.status >= 400) {
       let code = `HTTP_${res.status}`;
       try {
-        code = JSON.parse(text).code ?? code;
+        code = JSON.parse(text).error?.code ?? code;
       } catch {}
       fail(kind, code);
       return null;

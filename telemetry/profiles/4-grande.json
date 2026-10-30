@@ -1,0 +1,6 @@
+{ "id": "grande", "name": "Carga grande", "order": 4,
+  "question": "1.000 usuarios: hora pico con 50.000 registrados (4 veces la mezcla mediana).",
+  "groups": [{ "type": "class", "count": 4, "size": 30 }, { "type": "team", "count": 22, "size": 5 }, { "type": "solo", "count": 20 }], "repeat": true,
+  "plan": { "mode": "steps", "users": [1000], "stepSec": 360, "warmSec": 60, "rampSec": 60 },
+  "quick": { "stepSec": 180, "warmSec": 30, "rampSec": 30 },
+  "thresholds": { "restP95": 300, "loginP95": 1000, "fanoutP95": 150, "previewP95": 150, "pingP99": 100, "errorRate": 0.01 } }

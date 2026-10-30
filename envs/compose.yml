@@ -1,0 +1,16 @@
+# Mongo para todas las pruebas. Escenario "PC físico" y "EC2": solo este archivo
+# (el servidor corre nativo con node). Escenario "contenedor": se suma compose.container.yml.
+#   docker compose -f envs/compose.yml up -d
+name: shareboard-carga
+services:
+  mongo:
+    image: mongo:7.0
+    ports:
+      - "127.0.0.1:${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+    # Núcleos donde puede correr Mongo. PC: los P-cores (0-7). EC2 t3.small: 0-1.
+    cpuset: "${MONGO_CPUSET:-0-7}"
+    restart: unless-stopped
+volumes:
+  mongo-data:

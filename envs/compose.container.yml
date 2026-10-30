@@ -1,0 +1,44 @@
+# Escenario "contenedor con límites": el servidor también corre en Docker y ambos
+# servicios tienen techo de CPU y memoria. Se usa junto con compose.yml:
+#   docker compose -f envs/compose.yml -f envs/compose.container.yml up -d --build
+services:
+  mongo:
+    cpus: "${MONGO_CPUS:-1}"
+    mem_limit: "${MONGO_MEM:-1g}"
+    memswap_limit: "${MONGO_MEM:-1g}"
+    # Mongo ajusta su caché a la memoria del contenedor (50 % de (límite - 1 GB), mínimo 256 MB).
+  server:
+    # SERVER_DIR lo pone el laboratorio: ../server en el PC o servidor/ en un clon del repo.
+    build:
+      context: ${SERVER_DIR:-../../server}
+      # Antes: npm run build (el laboratorio lo hace solo).
+      dockerfile_inline: |
+        FROM node:22-slim
+        WORKDIR /app
+        COPY package.json package-lock.json ./
+        RUN npm ci --omit=dev
+        COPY dist ./dist
+        EXPOSE 3000
+    depends_on: [mongo]
+    ports:
+      - "3000:3000"
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_DB: shareboard_carga
+      NODE_ENV: production
+      TOKEN_SECRET: carga-local-no-usar-en-produccion
+      REGISTER_PER_HOUR: "1000000"
+      LOGIN_PER_MINUTE: "1000000"
+      CREATE_BOARD_PER_HOUR: "1000000"
+      PIN_PER_MINUTE: "1000000"
+    # El techo que estamos estudiando. cpus=1: 100 ms de CPU cada 100 ms; si los gasta antes, el kernel lo frena.
+    cpus: "${SERVER_CPUS:-1}"
+    mem_limit: "${SERVER_MEM:-512m}"
+    memswap_limit: "${SERVER_MEM:-512m}"
+    cpuset: "${SERVER_CPUSET:-0-7}"
+    ulimits:
+      nofile: 65535
+    # El log de Fastify va a un archivo del host: el agente lo lee para la latencia del servidor.
+    volumes:
+      - ./logs:/logs
+    command: ["sh", "-c", "exec node dist/index.js >> /logs/server.log 2>&1"]

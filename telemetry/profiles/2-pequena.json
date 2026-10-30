@@ -1,0 +1,6 @@
+{ "id": "pequena", "name": "Carga pequeña", "order": 2,
+  "question": "25 usuarios: hora pico de una app con 1.000 registrados (1 clase de 15 y 2 equipos de 5).",
+  "groups": [{ "type": "class", "count": 1, "size": 15 }, { "type": "team", "count": 2, "size": 5 }],
+  "plan": { "mode": "steps", "users": [25], "stepSec": 360, "warmSec": 60, "rampSec": 60 },
+  "quick": { "stepSec": 180, "warmSec": 30, "rampSec": 30 },
+  "thresholds": { "restP95": 300, "loginP95": 1000, "fanoutP95": 150, "previewP95": 150, "pingP99": 100, "errorRate": 0.01 } }

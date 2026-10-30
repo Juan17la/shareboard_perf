@@ -1,0 +1,35 @@
+{
+  "name": "shareboard-server",
+  "version": "1.8.0-beta",
+  "private": true,
+  "type": "module",
+  "description": "Live Whiteboard backend — REST + WebSocket (see mobile/docs).",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file-if-exists=.env dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node test/smoke.mjs",
+    "check:ai": "node --import tsx test/ai.mjs",
+    "check:persistence": "node --import tsx test/persistence.mjs",
+    "check:patch": "node --import tsx test/patch.mjs",
+    "check:auth": "node --import tsx test/auth.mjs"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@fastify/websocket": "^11.2.0",
+    "fastify": "^5.6.1",
+    "mongodb": "^6.20.0",
+    "nodemailer": "^10.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.0",
+    "@types/nodemailer": "^8.0.2",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

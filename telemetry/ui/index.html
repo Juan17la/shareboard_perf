@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Laboratorio de carga</title>
+  <link rel="stylesheet" href="vendor/uPlot.min.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 4 4-7 5 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <strong>Laboratorio de carga</strong>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="lab" aria-selected="true">Laboratorio</button>
+      <button role="tab" data-tab="results" aria-selected="false">Resultados</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ================= LABORATORIO ================= -->
+    <section id="tab-lab">
+      <div class="setup">
+        <div class="card">
+          <h2>1 · Entorno</h2>
+          <div class="seg" id="modes"></div>
+          <div id="remote-fields" class="remote" hidden>
+            <input id="r-host" placeholder="IP de la instancia" autocomplete="off">
+            <input id="r-token" placeholder="Token" autocomplete="off">
+          </div>
+          <div class="row">
+            <button id="prepare" class="btn primary">Preparar</button>
+            <button id="reset" class="btn ghost" title="Borra la base de pruebas y la vuelve a crear">Reiniciar datos</button>
+          </div>
+          <ul class="checks" id="checks"></ul>
+        </div>
+
+        <div class="card">
+          <h2>2 · Pruebas <label class="quick"><input type="checkbox" id="quick"> rápida</label></h2>
+          <div id="running" class="running" hidden></div>
+          <ul class="tests" id="tests"></ul>
+        </div>
+      </div>
+
+      <details class="card log" id="logbox">
+        <summary>Registro <span id="lastlog" class="muted"></span></summary>
+        <pre id="log"></pre>
+      </details>
+
+      <div id="live-empty" class="muted center">Cuando corras una prueba, aquí la verás en vivo.</div>
+      <div id="live"></div>
+    </section>
+
+    <!-- ================= RESULTADOS ================= -->
+    <section id="tab-results" hidden>
+      <div class="card">
+        <div class="row between">
+          <h2>Corridas</h2>
+          <label class="btn">Abrir archivo<input id="file" type="file" accept=".ndjson,.json,.txt" hidden></label>
+        </div>
+        <div class="table-wrap"><table id="runs"><thead><tr><th>Fecha</th><th>Entorno</th><th>Prueba</th><th>Resultado</th><th>Tamaño</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div id="replay"></div>
+    </section>
+  </main>
+
+  <!-- Plantilla del tablero (se usa en vivo y en reproducción) -->
+  <template id="dash">
+    <div class="dash">
+      <div class="runinfo"></div>
+      <div class="player">
+        <button class="btn icon play" aria-label="Reproducir">▶</button>
+        <select class="speed" aria-label="Velocidad"><option value="1">1x</option><option value="10">10x</option><option value="30" selected>30x</option><option value="120">120x</option></select>
+        <div class="timeline"><canvas class="bands" height="24"></canvas><input class="seek" type="range" min="0" max="0" value="0" aria-label="Tiempo"></div>
+        <span class="clock">00:00</span>
+      </div>
+      <div class="kpis"></div>
+      <div class="grid charts"></div>
+      <div class="card heat-card">
+        <div class="card-h"><h3>CPU por núcleo</h3><span class="hint heat-hint">Cada fila es un núcleo. Más oscuro = más ocupado.</span></div>
+        <canvas class="heat"></canvas>
+      </div>
+      <div class="card table-wrap">
+        <table class="steps"><thead><tr><th>#</th><th>Usuarios</th><th>Tableros</th><th>Resultado</th><th>p95 REST</th><th>p95 trazo</th><th>p95 preview</th><th>Errores</th><th>Hilo JS</th><th>RSS</th><th>Motivo</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </template>
+
+  <script src="vendor/uPlot.iife.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

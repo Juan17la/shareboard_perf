@@ -1,0 +1,16 @@
+# Dependencias y compilados
+node_modules/
+servidor/dist/
+
+# Claves: nunca al repo
+.env
+.env.*
+!.env.example
+
+# Datos que genera cada máquina (las corridas oficiales están en resultados/)
+data/raw/
+data/raw-*/
+data/agent*/
+data/seed-*.json
+data/token.txt
+envs/logs/

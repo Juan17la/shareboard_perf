@@ -3,7 +3,7 @@
 // CPU promedio y pico (núcleo más ocupado y columnas us/sy/wa/id de top), memoria residente, disco (IOPS, MB/s y %util de iostat),
 // red (entrada y salida) y latencia p50/p95/p99, escalón por escalón.
 //
-// Uso: node analitics/telemetry/report.mjs data/raw/A.ndjson data/raw/B.ndjson > RESULTADOS.md
+// Uso: node analitics/telemetry/report.mjs data/raw/A.ndjson data/raw/B.ndjson > tablas.md   (para las tablas oficiales: node telemetry/tablas.mjs)
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 

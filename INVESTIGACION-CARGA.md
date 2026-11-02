@@ -2,6 +2,8 @@
 
 Investigación para definir **qué hace un usuario real**, **cuántos usuarios son una carga pequeña, mediana y grande** para una aplicación poco conocida, y **qué pruebas sostenidas de 5 minutos** reflejan eso.
 
+> **Actualización (2 nov 2026): la carga ahora rota sin parar.** Con sesiones de 40 min, en una prueba de 5 minutos casi nadie salía y, al llegar al número de usuarios, ya no había más logins: la carga dejaba de ejercitar la entrada. Ahora la sesión media es de **2 minutos** y las pruebas son por **ritmo de llegada**: 120 activos (1/s), **240 activos (2/s)**, 600 activos (5/s) y escalones hasta 8/s, con 10 minutos medidos. Unos usuarios salen y otros entran durante toda la prueba (ley de Little: llegadas = activos ÷ sesión). 2/s son 7.200 sesiones por hora y 5/s son 18.000: el tráfico de hora pico de una app web con decenas de miles de usuarios activos al día. Las tablas de abajo (40 min, 25/250/1.000 usuarios) quedan como antecedente; la definición vigente está en [PRUEBAS.md](PRUEBAS.md#2-las-cinco-pruebas).
+
 ---
 
 ## 1. Resumen

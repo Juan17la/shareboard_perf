@@ -11,6 +11,7 @@ import { buildLayout, describe } from './layout.mjs';
 import { SERVER } from './paths.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+export const ARRIVE_SEC = 120;
 const sleep = (ms, signal) =>
   new Promise((res) => {
     if (signal?.aborted) return res();
@@ -127,6 +128,8 @@ export async function runTest(opts, write) {
   let abortStep = null;
   const loads = [];
   let cpuPrev = process.cpuUsage();
+  // Sesión media (s): con usuarios activos fijos, llegadas/s = usuarios ÷ sesión (ley de Little).
+  const sessionSec = plan.sessionSec ?? profile.flow?.sessionMeanSec ?? 120;
   const setUsers = (n, ramp = plan.rampSec ?? 30) => {
     rampFrom = users;
     rampTo = n;
@@ -137,7 +140,7 @@ export async function runTest(opts, write) {
   const tick = setInterval(() => {
     const k = rampMs ? Math.min(1, (Date.now() - rampStart) / rampMs) : 1;
     users = Math.round(rampFrom + (rampTo - rampFrom) * k);
-    for (const w of workers) w.postMessage({ type: 'users', users });
+    for (const w of workers) w.postMessage({ type: 'users', users, sessionSec });
 
     const parts = [...pending.values()];
     pending.clear();
@@ -146,12 +149,14 @@ export async function runTest(opts, write) {
     let http = 0;
     let active = 0;
     let sockets = 0;
+    let left = 0;
     const ws = { out: 0, in: 0, bytesIn: 0, bytesOut: 0, cursorsIn: 0, previewsIn: 0 };
     const states = { watch: 0, cursor: 0, draw: 0, move: 0 };
     const elu = [];
     for (const p of parts) {
       active += p.active;
       sockets += p.sockets;
+      left += p.st.left;
       elu.push(p.elu);
       http += p.st.http;
       ws.out += p.st.wsOut;
@@ -166,12 +171,18 @@ export async function runTest(opts, write) {
     }
     const ops = {};
     for (const [kind, hh] of Object.entries(h)) ops[kind] = { ...summary(hh), h: hh };
+    // REST junto (listar, unirse, crear; el login va aparte, como en el resumen del escalón).
+    const restH = ['list', 'join', 'create'].reduce((acc, k) => merge(acc, h[k] ?? {}), {});
+    const rest = summary(restH);
+    if (rest) ops.rest = rest;
     const cpu = process.cpuUsage(cpuPrev);
     cpuPrev = process.cpuUsage();
     const rec = {
       t: 'load',
       ts: Date.now(),
       users: { target: users, active, sockets },
+      // Rotación: entradas = logins y registros completados, salidas = sesiones terminadas en este segundo.
+      churn: { in: (h.login ? summary(h.login).n : 0) + (h.register ? summary(h.register).n : 0), out: left },
       states,
       rps: http,
       ops,
@@ -199,11 +210,17 @@ export async function runTest(opts, write) {
   async function step(n, sec, kind = 'step', o = {}) {
     if (signal?.aborted) return null;
     stepStart = Date.now();
-    const warmSec = o.warmSec ?? plan.warmSec ?? 60;
+    // Con measureSec: llegada en ARRIVE_SEC (igual en todas las pruebas, así todas duran lo mismo),
+    // 30 s de estabilización y measureSec medidos. Luego entran y salen n ÷ sesión usuarios por segundo.
+    const rate = n ? n / sessionSec : 0;
+    const measureSec = o.measureSec ?? plan.measureSec;
+    const rampSec = o.rampSec ?? (measureSec ? ARRIVE_SEC : plan.rampSec ?? 60);
+    const warmSec = o.warmSec ?? (measureSec ? Math.ceil(rampSec) + 30 : plan.warmSec ?? 60);
+    if (measureSec) sec = warmSec + measureSec;
     const layout = describe(slots, n);
-    setUsers(n, o.rampSec ?? plan.rampSec ?? 60);
-    event('step-start', { users: n, sec, stepKind: kind, layout });
-    progress({ step: results.length + 1, users: n, layout, kind, startedAt: stepStart, sec });
+    setUsers(n, rampSec);
+    event('step-start', { users: n, sec, stepKind: kind, layout, arrivalPerSec: round(rate, 2), sessionSec });
+    progress({ step: results.length + 1, users: n, layout, kind, startedAt: stepStart, sec, arrivalPerSec: round(rate, 2) });
     const cut = await new Promise((res) => {
       const t = setTimeout(() => res(null), sec * 1000);
       const stop = () => (clearTimeout(t), res('detenida por el usuario'));
@@ -215,7 +232,7 @@ export async function runTest(opts, write) {
     // Si se cortó antes de terminar el calentamiento, se resume lo que hubo.
     const from = end - stepStart > warmSec * 1000 + 10_000 ? stepStart + warmSec * 1000 : stepStart;
     const s = summarize(n, kind, from, end);
-    Object.assign(s, { start: stepStart, end, layout });
+    Object.assign(s, { start: stepStart, end, layout, arrivalPerSec: round(rate, 2), sessionSec });
     if (cut) {
       s.pass = false;
       s.aborted = true;
@@ -247,14 +264,23 @@ export async function runTest(opts, write) {
     for (const s of aw) for (const [route, o] of Object.entries(s.srv ?? {})) merge((srvH[route] ??= {}), o.h);
     const srv = {};
     for (const [route, hh] of Object.entries(srvH)) srv[route] = summary(hh);
+    srv.rest = summary(['list', 'join', 'create'].reduce((acc, k) => merge(acc, srvH[k] ?? {}), {}));
     const stat = (f) => {
       const v = aw.map(f).filter((x) => typeof x === 'number' && Number.isFinite(x));
       return v.length ? { avg: round(v.reduce((s, x) => s + x, 0) / v.length), max: round(Math.max(...v)) } : null;
     };
     const sumDisk = (s, k) => Object.values(s.disks ?? {}).reduce((x, d) => x + d[k], 0);
     const busiest = (s) => Object.values(s.net?.ifaces ?? {}).reduce((best, d) => (d.txMBs > best.txMBs ? d : best), { txMBs: 0, rxMBs: 0 });
+    const diskUtil = (s) => Math.max(0, ...Object.values(s.disks ?? {}).map((d) => d.util ?? 0));
     const res = {
       cpuTotal: stat((s) => s.cpu?.busy),
+      // Columnas de top: us, sy, wa, id (% del total de la máquina).
+      cpuUser: stat((s) => s.cpu?.user),
+      cpuSystem: stat((s) => s.cpu?.system),
+      cpuIdle: stat((s) => s.cpu && 100 - s.cpu.busy - s.cpu.iowait),
+      diskUtil: stat(diskUtil),
+      churnIn: win.length ? round(win.reduce((t, r) => t + (r.churn?.in ?? 0), 0) / win.length, 2) : null,
+      churnOut: win.length ? round(win.reduce((t, r) => t + (r.churn?.out ?? 0), 0) / win.length, 2) : null,
       cpuHottestCore: stat((s) => Math.max(...(s.cores ?? [0]))),
       iowait: stat((s) => s.cpu?.iowait),
       steal: stat((s) => s.cpu?.steal),
@@ -279,6 +305,7 @@ export async function runTest(opts, write) {
     };
     check('p95 REST', lat.rest && lat.rest.p95 - baseMs, thr.restP95);
     check('p95 login', lat.login && lat.login.p95 - baseMs, thr.loginP95);
+    check('p95 registro', lat.register && lat.register.p95 - baseMs, thr.loginP95);
     check('p95 difusión', lat.fanout && lat.fanout.p95 - baseMs, thr.fanoutP95);
     check('p95 preview', lat.preview && lat.preview.p95 - baseMs, thr.previewP95);
     check('p99 ping', lat.ping && lat.ping.p99 - baseMs, thr.pingP99);

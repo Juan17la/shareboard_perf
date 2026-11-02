@@ -25,11 +25,15 @@ const WS = globalThis.WebSocket ?? createRequire(serverPkg)('ws');
 const clock = () => performance.timeOrigin + performance.now();
 
 const running = new Map();
+let sessionSec = profile.flow.sessionMeanSec; // lo actualiza el hilo principal
+// Nombres únicos para los registros: marca de esta corrida + hilo + contador (máx. 24 caracteres).
+const tag = Math.round(performance.timeOrigin).toString(36);
+let newUsers = 0;
 
 // ---------- estadísticas del segundo en curso ----------
 let st = fresh();
 function fresh() {
-  return { h: {}, err: {}, http: 0, wsOut: 0, wsIn: 0, bytesIn: 0, bytesOut: 0, cursorsIn: 0, previewsIn: 0, states: { watch: 0, cursor: 0, draw: 0, move: 0 } };
+  return { h: {}, err: {}, left: 0, http: 0, wsOut: 0, wsIn: 0, bytesIn: 0, bytesOut: 0, cursorsIn: 0, previewsIn: 0, states: { watch: 0, cursor: 0, draw: 0, move: 0 } };
 }
 const ok = (kind, ms) => histAdd((st.h[kind] ??= {}), ms);
 const fail = (kind, code) => {
@@ -53,6 +57,7 @@ setInterval(() => {
 
 parentPort.on('message', (m) => {
   if (m.type !== 'users') return;
+  if (m.sessionSec) sessionSec = m.sessionSec;
   const wanted = Math.min(m.users, slots.length);
   // Los usuarios de este hilo son los índices i con i % workers === workerId.
   for (let i = workerId; i < slots.length; i += workers) {
@@ -113,7 +118,12 @@ async function run(i, vu, signal) {
   const slot = slots[i];
   const boardId = boards[slot.board % boards.length];
   while (!signal.aborted) {
-    const auth = await http('login', 'POST', '/auth/login', { login: acc.username, password });
+    // Una parte de las llegadas son personas nuevas: se registran (scrypt + escritura en Mongo) en vez de hacer login.
+    let auth;
+    if (Math.random() < (F.registerRatio ?? 0)) {
+      const username = `n${tag}_${workerId}_${(newUsers++).toString(36)}`;
+      auth = await http('register', 'POST', '/auth/register', { username, email: `${username}@carga.test`, password, nickname: `vu${i}` });
+    } else auth = await http('login', 'POST', '/auth/login', { login: acc.username, password });
     if (!auth) {
       await sleep(expo(3000, 1000), signal);
       continue;
@@ -130,7 +140,9 @@ async function run(i, vu, signal) {
     }
     s.boardToken = joined.boardToken;
     await session(i, vu, signal, s);
-    // Fin de la sesión: "otra persona" ocupa este puesto (llegadas constantes, Little's law).
+    // Fin de la sesión: sale y "otra persona" ocupa este puesto enseguida (login de nuevo).
+    // ponytail: modelo cerrado (puestos fijos); si el servidor se atasca, las llegadas también bajan.
+    if (!signal.aborted) st.left++;
   }
 }
 
@@ -292,7 +304,7 @@ function session(i, vu, signal, s) {
           later(expo(F.listSec * 1000, 30_000), list);
         };
         later(expo(F.listSec * 1000, 30_000), list);
-        later(expo(F.sessionMeanSec * 1000, 120_000, F.sessionMeanSec * 4000), finish);
+        later(expo(sessionSec * 1000, 5_000, sessionSec * 4000), finish);
         enter('watch');
       } else if (data.startsWith('{"type":"error"')) fail('ws', JSON.parse(data).code ?? 'ERROR');
     };

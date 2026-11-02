@@ -1,0 +1,6 @@
+{ "id": "media", "name": "Carga media", "order": 3,
+  "question": "Entran 2 usuarios por segundo y se quedan ~2 min: 240 activos, 7.200 sesiones por hora. Varias facultades o empresas pequeñas a la vez.",
+  "groups": [{ "type": "class", "count": 4, "size": 30 }, { "type": "team", "count": 22, "size": 5 }, { "type": "solo", "count": 20 }], "repeat": true,
+  "plan": { "mode": "steps", "users": [240], "sessionSec": 120, "measureSec": 600 },
+  "quick": { "measureSec": 180 },
+  "thresholds": { "restP95": 300, "loginP95": 1000, "fanoutP95": 150, "previewP95": 150, "pingP99": 100, "errorRate": 0.01 } }

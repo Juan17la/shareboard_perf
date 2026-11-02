@@ -19,7 +19,7 @@ const COMPOSE = ['compose', '-f', join(ENVS, 'compose.yml')];
 const COMPOSE_C = [...COMPOSE, '-f', join(ENVS, 'compose.container.yml')];
 const MONGO_CONTAINER = 'shareboard-carga-mongo-1';
 const SERVER_CONTAINER = 'shareboard-carga-server-1';
-export const SEED_USERS = 3000;
+export const SEED_USERS = 6000; // la prueba Server killer mantiene 6.000 usuarios activos
 export const SERVER_PORT = 3000;
 export const AGENT_PORT = 7071;
 

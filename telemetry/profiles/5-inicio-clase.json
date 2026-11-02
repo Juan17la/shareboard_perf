@@ -1,6 +1,0 @@
-{ "id": "inicio-clase", "name": "Inicio de clase", "order": 5,
-  "question": "Carga mediana estable y de pronto entran 4 clases de 30 en 60 s (120 logins). ¿Lo notan los que ya estaban?",
-  "groups": [{ "type": "class", "count": 4, "size": 30 }, { "type": "team", "count": 22, "size": 5 }, { "type": "solo", "count": 20 }], "then": [{ "type": "class", "count": 4, "size": 30 }],
-  "plan": { "mode": "steps", "users": [{ "users": 250, "sec": 180, "warmSec": 60, "rampSec": 60 }, { "users": 370, "sec": 300, "warmSec": 0, "rampSec": 60 }] },
-  "quick": { "users": [{ "users": 250, "sec": 90, "warmSec": 30, "rampSec": 30 }, { "users": 370, "sec": 150, "warmSec": 0, "rampSec": 60 }] },
-  "thresholds": { "restP95": 300, "loginP95": 1000, "fanoutP95": 150, "previewP95": 150, "pingP99": 100, "errorRate": 0.01 } }

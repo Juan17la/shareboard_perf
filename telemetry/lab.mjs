@@ -17,7 +17,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { runTest } from './lib/runner.mjs';
+import { ARRIVE_SEC, runTest } from './lib/runner.mjs';
 import { CORES, DATA, MODES, coreLayout, freePort, localTarget, SERVER_PORT, AGENT_PORT } from './lib/target.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -95,7 +95,8 @@ const PROFILES = Object.fromEntries(
 function duration(p, quick) {
   const plan = { ...p.plan, ...(quick ? p.quick : {}) };
   if (plan.mode === 'adaptive') return quick ? '15 a 30 min' : '30 a 60 min';
-  const sec = plan.users.reduce((t, u) => t + (typeof u === 'number' ? plan.stepSec : u.sec), 0);
+  // Con measureSec: llegada fija + 30 s de estabilización + medición (todas las pruebas duran lo mismo).
+  const sec = plan.users.reduce((t, u) => t + (plan.measureSec ? ARRIVE_SEC + 30 + plan.measureSec : typeof u === 'number' ? plan.stepSec : u.sec), 0);
   return `${Math.round(sec / 60)} min`;
 }
 

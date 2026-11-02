@@ -1,37 +1,44 @@
 # Shareboard: análisis de rendimiento
 
-Laboratorio de carga para el proyecto final de Arquitectura de computadores: ¿en qué máquina debería correr [Shareboard](https://github.com/Juan17la/shareboard_server) y con qué datos lo sostenemos?
+Proyecto final de Arquitectura de computadores: ¿en qué máquina debería correr [Shareboard](https://github.com/Juan17la/shareboard_server) y con qué datos lo sostenemos?
 
-Mide CPU (total, por núcleo y por hilo), memoria residente, disco (IOPS y MB/s), red y latencia p50/p95/p99 bajo una carga realista sostenida, y compara un PC físico, un contenedor con límites y una instancia EC2 con las mismas pruebas.
+Se midieron CPU (total, por núcleo y por hilo), memoria residente, disco (IOPS, MB/s, %util), red y latencia p50/p95/p99 bajo carga continua y sostenida. Las mismas cuatro pruebas corrieron en cuatro entornos: el PC físico, un contenedor con 1 CPU, un contenedor con 2 CPU y una instancia AWS EC2.
 
-## Qué hay aquí
+**Resultado en una línea:** Shareboard espera en la CPU. El cuello está en el hilo único de JavaScript (tiempo real) y en el threadpool de scrypt (login), no en el disco, la memoria ni la red. El PC sostiene 600 usuarios activos, el contenedor de 2 CPU 240, el de 1 CPU 120 y la t3.small menos de 120.
+
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| [docs/SETUP-LOCAL.md](docs/SETUP-LOCAL.md) | Instalar y correr las pruebas en una máquina local (Debian/Ubuntu, Arch, Windows con WSL2) |
+| [docs/SETUP-DOCKER.md](docs/SETUP-DOCKER.md) | El mismo servidor en un contenedor con límites de CPU y memoria |
+| [docs/SETUP-AWS.md](docs/SETUP-AWS.md) | Servidor y generador en EC2, y cómo traer los resultados |
+| [docs/CARGAS.md](docs/CARGAS.md) | Cómo se diseñaron los niveles de carga: flujo de usuario, ley de Little, usuarios por segundo, por minuto y totales |
+| [docs/MEDICIONES.md](docs/MEDICIONES.md) | Qué se midió, de dónde sale cada número y todas las tablas por carga y entorno |
+| [docs/COMPARACIONES.md](docs/COMPARACIONES.md) | Por qué cada entorno da lo que da, fichas técnicas y precios |
+| [docs/CONCLUSIONES.md](docs/CONCLUSIONES.md) | Las cuatro preguntas del proyecto, con la causa en el código y en el hardware, y cómo solucionarla |
+
+## Qué hay en el repositorio
 
 | Carpeta | Contenido |
 |---|---|
-| `telemetry/` | El laboratorio: interfaz web, generador de carga, agente de telemetría, pruebas (`profiles/`) |
-| `servidor/` | Copia exacta del servidor Shareboard que se midió (en el PC de desarrollo se usa `../server`) |
-| `envs/` | Docker Compose de MongoDB y del servidor en contenedor con límites |
-| `resultados/` | Corridas oficiales (`.ndjson`) y sus tablas |
-| `setup/` | Guías: [laboratorio local](setup/SETUP.md), [AWS con capa gratuita](setup/AWS-GRATIS.md), instalación a mano del [servidor](setup/EC2-SERVIDOR.md) y del [generador](setup/EC2-GENERADOR.md) en EC2 |
-| `PLAN.md`, `INVESTIGACION-CARGA.md`, `PRUEBAS.md` | Plan, investigación de la carga y protocolo de pruebas |
+| `telemetry/` | El laboratorio: interfaz web (`lab.mjs`), generador de carga, agente de telemetría, pruebas (`profiles/`), guion de campaña (`campana.mjs`) y generador de tablas (`tablas.mjs`) |
+| `resultados/` | Datos crudos oficiales, segundo a segundo (`pc/`, `docker-1cpu/`, `docker-2cpu/`, `aws/`). `anteriores/` guarda corridas del modelo de carga anterior |
+| `servidor/` | Copia exacta del servidor Shareboard que se midió |
+| `envs/` | Docker Compose de MongoDB y del servidor con límites |
+| `setup/ec2-preparar.sh` | Instalación de una instancia EC2 con un comando |
 
 ## Uso rápido
 
-Requisitos: Linux, Node 22 (`nvm install 22`) y Docker.
+Requisitos: Linux (o WSL2), Node 22 y Docker.
 
 ```bash
 git clone https://github.com/Juan17la/shareboard_perf.git
 cd shareboard_perf
-node telemetry/lab.mjs
+node telemetry/lab.mjs          # abre http://localhost:7070
 ```
 
-Abre http://localhost:7070, elige el entorno, pulsa **Preparar** y corre las pruebas.
-
-En EC2, un solo comando por instancia (ver [setup/AWS-GRATIS.md](setup/AWS-GRATIS.md)):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Juan17la/shareboard_perf/main/setup/ec2-preparar.sh | bash -s servidor    # o: generador
-```
+Elige el entorno, pulsa **Preparar** y corre las pruebas. Los resultados se descargan desde la misma página (CSV y NDJSON).
 
 ## Licencia
 

@@ -70,6 +70,26 @@
   <template id="dash">
     <div class="dash">
       <div class="runinfo"></div>
+      <div class="downloads">
+        <span class="muted">Guardar en este equipo:</span>
+        <button class="btn" data-dl="summary" title="Una fila por escalón con las métricas del enunciado (promedio y pico)">Resumen (.csv)</button>
+        <button class="btn" data-dl="seconds" title="Una fila por segundo: para graficar en Excel o Sheets">Por segundo (.csv)</button>
+        <button class="btn" data-dl="raw" title="Todo lo registrado; se vuelve a abrir aquí con «Abrir archivo»">Datos crudos (.ndjson)</button>
+      </div>
+      <details class="card guide">
+        <summary>Cómo leer la telemetría</summary>
+        <p>Cada prueba mantiene un número fijo de <b>usuarios activos</b> mientras unos entran (login → listar → unirse al tablero) y otros salen, sin parar hasta que acaba el tiempo. Solo cuenta la <b>ventana medida</b> (banda verde o roja), después de la llegada y 30 s de estabilización.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Métrica</th><th>Qué mirar</th><th>Equivale a</th><th>Qué significa</th></tr></thead>
+          <tbody>
+            <tr><td>Uso de CPU</td><td>Promedio y pico; el núcleo más ocupado</td><td><code>top</code> → us, sy, wa, id</td><td>us alto = trabajo de cálculo (nuestro código). sy alto = el sistema operativo (red, llamadas al kernel). wa alto = la CPU espera al disco. id bajo = no queda CPU libre. Si un núcleo está en 100 % y los demás ociosos, el límite es el hilo único de Node.</td></tr>
+            <tr><td>Memoria residente</td><td>RES del proceso, promedio y pico</td><td><code>top</code> → RES</td><td>Lo que de verdad ocupa en RAM (no lo que reserva). El pico decide el tamaño mínimo de máquina.</td></tr>
+            <tr><td>Disco</td><td>IOPS, MB/s y %util</td><td><code>iostat -x 1</code></td><td>Muchas IOPS con pocos MB/s = operaciones pequeñas (base de datos): importa el IOPS. %util cerca de 100 = disco saturado.</td></tr>
+            <tr><td>Red</td><td>Entrada y salida por segundo</td><td><code>/proc/net/dev</code></td><td>Si la salida se acerca al ancho de banda de la máquina, la red es el cuello aunque la CPU esté libre.</td></tr>
+            <tr><td>Latencia</td><td>p50, p95 y p99 (nunca el promedio)</td><td>El generador de carga</td><td>p50 = la experiencia típica; p95 = así le va al 5 % con peor suerte; p99 = 1 de cada 100. Es lo único que siente el usuario.</td></tr>
+          </tbody>
+        </table></div>
+      </details>
       <div class="player">
         <button class="btn icon play" aria-label="Reproducir">▶</button>
         <select class="speed" aria-label="Velocidad"><option value="1">1x</option><option value="10">10x</option><option value="30" selected>30x</option><option value="120">120x</option></select>
@@ -82,8 +102,12 @@
         <div class="card-h"><h3>CPU por núcleo</h3><span class="hint heat-hint">Cada fila es un núcleo. Más oscuro = más ocupado.</span></div>
         <canvas class="heat"></canvas>
       </div>
-      <div class="card table-wrap">
-        <table class="steps"><thead><tr><th>#</th><th>Usuarios</th><th>Tableros</th><th>Resultado</th><th>p95 REST</th><th>p95 trazo</th><th>p95 preview</th><th>Errores</th><th>Hilo JS</th><th>RSS</th><th>Motivo</th></tr></thead><tbody></tbody></table>
+      <div class="card">
+        <div class="card-h"><h3>Resumen de la ventana medida <span class="unit">promedio / pico</span></h3></div>
+        <div class="hint">Una fila por escalón. Estas son las cifras para el informe; «Resumen (.csv)» las guarda.</div>
+        <div class="table-wrap">
+          <table class="steps"><thead><tr><th>#</th><th>Usuarios</th><th>Llegan/s</th><th>Resultado</th><th>CPU %</th><th>Núcleo pico %</th><th>us · sy · wa · id %</th><th>RES servidor MB</th><th>Disco IOPS</th><th>Disco MB/s</th><th>%util</th><th>Red entra · sale MB/s</th><th>REST p50 · p95 · p99 ms</th><th>Errores</th><th>Motivo</th></tr></thead><tbody></tbody></table>
+        </div>
       </div>
     </div>
   </template>

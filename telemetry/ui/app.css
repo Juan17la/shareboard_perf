@@ -179,3 +179,13 @@ tbody tr.current { box-shadow: inset 3px 0 0 var(--accent); background: var(--bg
   .player { position: static; flex-wrap: wrap; }
   .timeline { flex-basis: 100%; order: 3; }
 }
+
+.downloads { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+.guide { margin-top: 10px; }
+.guide summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
+.guide p { margin: 10px 0 0; font-size: 13px; color: var(--text-2); max-width: 90ch; }
+.guide td { white-space: normal; vertical-align: top; font-size: 12.5px; }
+.guide td:first-child { font-weight: 600; white-space: nowrap; }
+.guide td:last-child { min-width: 320px; color: var(--text-2); }
+.hint.read { margin: 6px 0 0; color: var(--text-2); }
+.hint.read b { font-weight: 600; }

@@ -31,7 +31,7 @@ Nada más. El laboratorio instala las dependencias del servidor y lo compila si 
    - crea los datos de prueba (3.000 cuentas y tableros) la primera vez.
 
    Si algún puerto (3000, 7071, 27017, 7070) está ocupado, cierra lo que lo ocupa y reintenta. Los cuatro puntos se ponen en verde cuando todo está listo.
-2. **Pruebas:** pulsa **Correr** en la que quieras (el orden y las condiciones para comparar máquinas están en [`../PRUEBAS.md`](../PRUEBAS.md)). Antes de cada prueba el servidor se reinicia para empezar con la memoria limpia. La casilla **rápida** acorta los escalones (sirve para ensayar; para el informe usa la normal).
+2. **Pruebas:** pulsa **Correr** en la que quieras (el orden y las condiciones para comparar máquinas están en [`../PRUEBAS.md`](../PRUEBAS.md)). Antes de cada prueba el servidor se reinicia para empezar con la memoria limpia. La casilla **rápida** mide 3 min en vez de 10 (sirve para ensayar; para el informe usa la normal).
 3. **En vivo:** debajo aparecen los indicadores y las gráficas mientras corre. **Detener** la corta y guarda lo que alcanzó a medir.
 4. **Resultados:** lista de todas las corridas. Clic en una para reproducirla (▶, velocidad, barra de tiempo). **Abrir archivo** carga un `.ndjson` de otra máquina.
 
@@ -47,6 +47,18 @@ Nada más. El laboratorio instala las dependencias del servidor y lo compila si 
 | Datos de prueba (cuentas) | `analitics/data/seed-local.json` |
 
 Cada archivo guarda todo, segundo a segundo: recursos de la máquina, histogramas de latencia, errores, escalones y su resultado. Por eso cualquier prueba se puede reproducir y volver a analizar sin repetirla.
+
+### Guardar los resultados en tu equipo
+
+Debajo de los datos de cada corrida (en vivo o en **Resultados**) hay tres botones. Funcionan igual en el PC, en Docker y en EC2 (por el túnel SSH): el navegador descarga el archivo a tu carpeta de descargas.
+
+| Botón | Qué trae | Para qué |
+|---|---|---|
+| **Resumen (.csv)** | Una fila por escalón: CPU (promedio, pico, núcleo más ocupado, us/sy/wa/id), RES, disco (IOPS, MB/s, %util), red (entrada y salida) y latencias p50/p95/p99 | Las tablas del informe |
+| **Por segundo (.csv)** | Una fila por segundo con las mismas métricas | Graficar en Excel o Sheets |
+| **Datos crudos (.ndjson)** | Todo lo registrado | Volver a abrirla aquí con **Abrir archivo** |
+
+Los CSV usan `;` y coma decimal, así Excel en español los abre sin configurar nada.
 
 ### Para que la medición sea limpia en el PC
 

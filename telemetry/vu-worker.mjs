@@ -27,7 +27,7 @@ const clock = () => performance.timeOrigin + performance.now();
 const running = new Map();
 let sessionSec = profile.flow.sessionMeanSec; // lo actualiza el hilo principal
 // Nombres únicos para los registros: marca de esta corrida + hilo + contador (máx. 24 caracteres).
-const tag = Math.round(performance.timeOrigin).toString(36);
+const tag = Date.now().toString(36); // no performance.timeOrigin: en un hilo es el del proceso y se repetía entre corridas
 let newUsers = 0;
 
 // ---------- estadísticas del segundo en curso ----------

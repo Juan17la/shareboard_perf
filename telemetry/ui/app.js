@@ -13,11 +13,29 @@
   // ======================================================================
   // Tablero: el mismo para en vivo y para reproducir un archivo
   // ======================================================================
-  const LAT_OPS = { fanout: 'Trazo terminado a los demás', preview: 'Trazo en curso (preview)', list: 'Listar tableros', join: 'Unirse a tablero', login: 'Login', ping: 'Ping', create: 'Crear tablero' };
-  const SRV_ROUTES = { list: 'Listar tableros', join: 'Unirse', login: 'Login', create: 'Crear tablero' };
-  const LAT_THR = { login: 'loginP95', list: 'restP95', join: 'restP95', create: 'restP95', fanout: 'fanoutP95', preview: 'previewP95', ping: 'pingP99' };
+  const LAT_OPS = { rest: 'REST (listar, unirse, crear)', fanout: 'Trazo terminado a los demás', preview: 'Trazo en curso (preview)', list: 'Listar tableros', join: 'Unirse a tablero', login: 'Login', register: 'Registro', ping: 'Ping', create: 'Crear tablero' };
+  const SRV_ROUTES = { rest: 'REST (listar, unirse, crear)', list: 'Listar tableros', join: 'Unirse', login: 'Login', register: 'Registro', create: 'Crear tablero' };
+  const LAT_THR = { rest: 'restP95', register: 'loginP95', login: 'loginP95', list: 'restP95', join: 'restP95', create: 'restP95', fanout: 'fanoutP95', preview: 'previewP95', ping: 'pingP99' };
   const busiest = (a) => Object.values(a?.net?.ifaces ?? {}).reduce((b, d) => (d.txMBs + d.rxMBs > b.txMBs + b.rxMBs ? d : b), { txMBs: 0, rxMBs: 0 });
   const sumDisk = (a, k) => Object.values(a?.disks ?? {}).reduce((s, d) => s + (d[k] ?? 0), 0);
+  const diskUtil = (a) => (a?.disks ? Math.max(0, ...Object.values(a.disks).map((d) => d.util ?? 0)) : null);
+  const idle = (a) => (a?.cpu ? Math.max(0, 100 - a.cpu.busy - a.cpu.iowait) : null);
+  const hottest = (a) => (a?.cores?.length ? Math.max(...a.cores) : null);
+  // Percentiles desde histogramas (mismas cubetas que lib/hist.mjs): sirve para "REST" en archivos viejos
+  // y para la latencia del servidor, que se guarda por ruta.
+  const BASE = Math.log(1.04);
+  function pctOf(hs) {
+    const h = {};
+    for (const x of hs) for (const b in x ?? {}) h[b] = (h[b] ?? 0) + x[b];
+    const keys = Object.keys(h).map(Number).sort((a, b) => a - b);
+    const n = keys.reduce((t, k) => t + h[k], 0);
+    if (!n) return null;
+    const at = (q) => { let seen = 0; for (const k of keys) if ((seen += h[k]) >= Math.ceil(q * n)) return k === 0 ? 0.1 : Math.exp(k * BASE) / 10; };
+    return { n, p50: at(0.5), p95: at(0.95), p99: at(0.99) };
+  }
+  const REST = ['list', 'join', 'create']; // el login va aparte: scrypt lo hace lento a propósito
+  const restOf = (ops) => ops && (ops.rest ?? pctOf(REST.map((k) => ops[k]?.h)));
+  const opsOf = (ops, k) => (k === 'rest' ? restOf(ops) : ops?.[k]);
 
   function Dashboard(host, { live }) {
     const root = $('dash').content.firstElementChild.cloneNode(true);
@@ -27,7 +45,7 @@
     if (live) q('.player').hidden = true;
 
     const S = { t0: null, meta: null, machine: null, rows: new Map(), steps: [], events: [], end: null, maxSec: 0, cores: 0, dirty: true };
-    const view = { op: 'fanout', route: 'list' };
+    const view = { op: 'rest', route: 'rest' };
     let X = [];
     let R = [];
     let pos = 0;
@@ -40,7 +58,9 @@
     const thr = () => S.meta?.profile?.thresholds ?? {};
     const base = () => S.meta?.baseRttMs ?? 0;
 
-    function ingest(rec) {
+    const raw = [];
+    function ingest(rec, line) {
+      raw.push(line ?? JSON.stringify(rec));
       const ts = rec.ts ?? rec.ats;
       if (ts == null) return;
       if (S.t0 == null || rec.t === 'meta') S.t0 = S.t0 == null ? ts : Math.min(S.t0, ts);
@@ -64,61 +84,79 @@
 
     // ---------- gráficas: una idea por gráfica, una línea que explica qué mide ----------
     const pct = (src, key) => [
-      { label: 'p50', color: '--p50', get: (r) => src(r)?.[key()]?.p50 },
-      { label: 'p95', color: '--p95', get: (r) => src(r)?.[key()]?.p95 },
-      { label: 'p99', color: '--p99', get: (r) => src(r)?.[key()]?.p99 },
+      { label: 'p50', color: '--p50', get: (r) => opsOf(src(r), key())?.p50 },
+      { label: 'p95', color: '--p95', get: (r) => opsOf(src(r), key())?.p95 },
+      { label: 'p99', color: '--p99', get: (r) => opsOf(src(r), key())?.p99 },
     ];
+    // hint = qué mide; read = cómo leerla.
     const CHARTS = [
-      { title: 'Usuarios', unit: 'usuarios', hint: 'Objetivo del escalón y usuarios realmente conectados.', series: [
+      { title: 'Usuarios activos', unit: 'usuarios', hint: 'Objetivo del escalón y usuarios conectados al tablero.', read: 'Debe quedarse plana en el objetivo: unos salen y otros entran al mismo ritmo. Si «Conectados» cae por debajo, el servidor no alcanza a atender los logins.', series: [
         { label: 'Objetivo', color: '--s1', dash: true, get: (r) => r.load?.users.target },
         { label: 'Conectados', color: '--s2', get: (r) => r.load?.users.sockets },
       ] },
-      { title: 'Qué están haciendo', unit: 'usuarios', hint: 'Cuántos usuarios hay en cada estado del flujo realista.', series: [
-        { label: 'Mirando', color: '--s1', get: (r) => r.load?.states?.watch },
-        { label: 'Cursor', color: '--s2', get: (r) => r.load?.states?.cursor },
-        { label: 'Dibujando', color: '--s3', get: (r) => r.load?.states?.draw },
-        { label: 'Moviendo', color: '--s4', get: (r) => r.load?.states?.move },
+      { title: 'Entradas y salidas', unit: 'usuarios/s', hint: 'Logins y registros completados y sesiones terminadas cada segundo.', read: 'En la ventana medida ambas líneas oscilan alrededor del ritmo de la prueba (2/s en carga media, 5/s en alta). Que sigan vivas hasta el final prueba que la carga no se detiene.', only: () => R.some((r) => r.load?.churn), series: [
+        { label: 'Entran', color: '--s3', get: (r) => r.load?.churn?.in },
+        { label: 'Salen', color: '--s2', get: (r) => r.load?.churn?.out },
       ] },
-      { title: 'Tiempo real recibido', unit: 'mensajes/s', hint: 'Lo que el servidor reenvía a los clientes: crece con el tamaño de cada tablero.', series: [
-        { label: 'Cursores', color: '--s1', get: (r) => r.load?.ws.cursorsIn },
-        { label: 'Previews', color: '--s2', get: (r) => r.load?.ws.previewsIn },
-        { label: 'Total', color: '--s3', get: (r) => r.load?.ws.in },
-      ] },
-      { title: 'Latencia del usuario', unit: 'ms', select: ['op', LAT_OPS], hint: 'Lo que espera el usuario, incluida la red. Línea roja: límite.',
+      { title: 'Latencia del usuario', unit: 'ms', select: ['op', LAT_OPS], hint: 'Lo que espera el usuario, incluida la red. Línea roja: límite aceptable.', read: 'Mira p95 y p99, no p50: si p50 está bien pero p99 se dispara, 1 de cada 100 usuarios tiene una mala experiencia. Una brecha creciente entre p50 y p99 indica cola.',
         threshold: () => (thr()[LAT_THR[view.op]] != null ? thr()[LAT_THR[view.op]] + base() : null),
         series: pct((r) => r.load?.ops, () => view.op) },
-      { title: 'Latencia dentro del servidor', unit: 'ms', select: ['route', SRV_ROUTES], hint: 'Sin la red: sirve para comparar máquinas de forma justa.',
-        series: pct((r) => r.agent?.srv, () => view.route) },
-      { title: 'Errores', unit: 'por segundo', hint: 'Peticiones o mensajes que fallaron.', series: [
-        { label: 'Errores', color: '--s2', get: (r) => r.load?.errors },
+      { title: 'Latencia dentro del servidor', unit: 'ms', select: ['route', SRV_ROUTES], hint: 'Medida por el propio servidor, sin la red.', read: 'Sirve para comparar máquinas de forma justa (la nube suma internet). Si esta es baja y la del usuario alta, la espera está en la cola antes de que Node atienda la petición.',
+        series: pct((r) => (r.agent?.srv ? { ...r.agent.srv, rest: pctOf(REST.map((k) => r.agent.srv[k]?.h)) } : null), () => view.route) },
+      { title: 'CPU de la máquina (como top)', unit: '% del total', hint: 'us = nuestro código · sy = sistema operativo · wa = esperando disco · id = ocioso.', read: 'us dominante = trabajo de cálculo. wa alto = la CPU espera E/S, no está ocupada. id cerca de 0 = no queda CPU. st > 0 en la nube = el hipervisor nos quita CPU.', series: [
+        { label: 'us', color: '--s1', get: (r) => r.agent?.cpu.user },
+        { label: 'sy', color: '--s2', get: (r) => r.agent?.cpu.system },
+        { label: 'wa', color: '--s3', get: (r) => r.agent?.cpu.iowait },
+        { label: 'id', color: '--muted', dash: true, get: (r) => idle(r.agent) },
+        { label: 'st', color: '--s4', get: (r) => r.agent?.cpu.steal },
       ] },
-      { title: 'CPU del servidor por hilo', unit: '% de un núcleo', hint: '100 = un núcleo entero. El hilo de JavaScript no puede pasar de 100.', threshold: () => 100, series: [
+      { title: 'CPU: promedio y pico por núcleo', unit: '%', hint: 'Promedio de todos los núcleos frente al núcleo más ocupado en cada segundo.', read: 'Si el pico toca 100 % mientras el promedio está bajo, un solo núcleo es el cuello de botella (el hilo de JavaScript): más núcleos no ayudan, un núcleo más rápido sí.', threshold: () => 100, series: [
+        { label: 'Promedio', color: '--s1', get: (r) => r.agent?.cpu.busy },
+        { label: 'Núcleo más ocupado', color: '--s2', get: (r) => hottest(r.agent) },
+      ] },
+      { title: 'CPU del servidor por hilo', unit: '% de un núcleo', hint: '100 = un núcleo entero. El hilo de JavaScript no puede pasar de 100.', read: 'Hilo JavaScript cerca de 100 = saturado aunque la máquina tenga núcleos libres. libuv sube con los logins (scrypt).', threshold: () => 100, series: [
         { label: 'Hilo JavaScript', color: '--s1', get: (r) => r.agent?.server?.threads?.main },
         { label: 'libuv (scrypt)', color: '--s2', get: (r) => r.agent?.server?.threads?.['libuv-worker'] },
         { label: 'V8 (GC, JIT)', color: '--s3', get: (r) => { const t = r.agent?.server?.threads; return t ? Object.entries(t).reduce((s, [k, v]) => (k === 'main' || k === 'libuv-worker' ? s : s + v), 0) : null; } },
         { label: 'mongod', color: '--s4', get: (r) => r.agent?.mongo?.cpu },
       ] },
-      { title: 'CPU de la máquina', unit: '% del total', hint: 'iowait: esperando al disco. steal: la nube nos quita CPU.', series: [
-        { label: 'Usuario', color: '--s1', get: (r) => r.agent?.cpu.user },
-        { label: 'Sistema', color: '--s2', get: (r) => r.agent?.cpu.system },
-        { label: 'iowait', color: '--s3', get: (r) => r.agent?.cpu.iowait },
-        { label: 'steal', color: '--s4', get: (r) => r.agent?.cpu.steal },
-      ] },
-      { title: 'Memoria residente', unit: 'MB', hint: 'Memoria física realmente usada. Línea roja: límite del contenedor.',
+      { title: 'Memoria residente (RES)', unit: 'MB', hint: 'RAM física que usa cada proceso (columna RES de top). Línea roja: límite del contenedor.', read: 'Debe estabilizarse. Si sube sin parar con usuarios constantes, hay una fuga. El pico + margen es la memoria mínima de la máquina.',
         threshold: () => R.find((r) => r.agent?.cgroup?.memLimitMB)?.agent.cgroup.memLimitMB ?? null,
         series: [
-          { label: 'Servidor', color: '--s1', get: (r) => r.agent?.cgroup?.memMB ?? r.agent?.server?.rssMB },
+          { label: 'Servidor', color: '--s1', get: (r) => r.agent?.server?.rssMB },
           { label: 'mongod', color: '--s2', get: (r) => r.agent?.mongo?.rssMB },
+          { label: 'Contenedor (cgroup)', color: '--s3', dash: true, get: (r) => r.agent?.cgroup?.memMB },
         ] },
-      { title: 'Disco', unit: 'operaciones/s', hint: 'Lecturas y escrituras al disco por segundo (IOPS).', series: [
+      { title: 'Disco: operaciones', unit: 'IOPS', hint: 'Lecturas y escrituras al disco por segundo (r/s y w/s de iostat).', read: 'Compáralo con la ficha técnica del disco. Muchas operaciones pequeñas = la base de datos necesita IOPS, no caudal.', series: [
         { label: 'Lectura', color: '--s1', get: (r) => r.agent && sumDisk(r.agent, 'readIops') },
         { label: 'Escritura', color: '--s2', get: (r) => r.agent && sumDisk(r.agent, 'writeIops') },
       ] },
-      { title: 'Red', unit: 'MB/s', hint: 'Tráfico de la interfaz más usada.', series: [
+      { title: 'Disco: caudal', unit: 'MB/s', hint: 'Megabytes leídos y escritos por segundo.', read: 'Caudal alto con pocas IOPS = archivos grandes. Si ambos son bajos, el disco no es el problema.', series: [
+        { label: 'Lectura', color: '--s1', get: (r) => r.agent && sumDisk(r.agent, 'readMBs') },
+        { label: 'Escritura', color: '--s2', get: (r) => r.agent && sumDisk(r.agent, 'writeMBs') },
+      ] },
+      { title: 'Disco: utilización', unit: '%util', hint: 'Tiempo con E/S en curso en el disco más ocupado (%util de iostat -x 1).', read: 'Cerca de 100 % = disco saturado y las peticiones hacen fila. En discos SSD/NVMe puede llegar a 100 % antes de su límite real: confírmalo con wa y la latencia.', threshold: () => 100, series: [
+        { label: '%util', color: '--s2', get: (r) => diskUtil(r.agent) },
+      ] },
+      { title: 'Red', unit: 'MB/s', hint: 'Tráfico de la interfaz más usada: entrada y salida.', read: 'La salida crece más rápido que la entrada porque el servidor reenvía cada cursor a todo el tablero. Compárala con el ancho de banda de la instancia. En el PC y en Docker el generador está en la misma máquina (interfaz lo): entrada y salida salen iguales.', series: [
         { label: 'Entrada', color: '--s1', get: (r) => (r.agent ? busiest(r.agent).rxMBs : null) },
         { label: 'Salida', color: '--s2', get: (r) => (r.agent ? busiest(r.agent).txMBs : null) },
       ] },
-      { title: 'Contenedor frenado', unit: 'ms por segundo', hint: 'Tiempo que el kernel frenó al contenedor por agotar su cuota de CPU (sumado entre núcleos: puede pasar de 1.000).', only: () => R.some((r) => r.agent?.cgroup), series: [
+      { title: 'Errores', unit: 'por segundo', hint: 'Peticiones o mensajes que fallaron.', read: 'Debe ser 0. Errores con la CPU saturada = el servidor ya no da abasto.', series: [
+        { label: 'Errores', color: '--s2', get: (r) => r.load?.errors },
+      ] },
+      { title: 'Qué están haciendo', unit: 'usuarios', hint: 'Cuántos usuarios hay en cada estado del flujo realista.', read: 'La mayoría mira; dibujar y mover generan casi todo el tráfico en tiempo real.', series: [
+        { label: 'Mirando', color: '--s1', get: (r) => r.load?.states?.watch },
+        { label: 'Cursor', color: '--s2', get: (r) => r.load?.states?.cursor },
+        { label: 'Dibujando', color: '--s3', get: (r) => r.load?.states?.draw },
+        { label: 'Moviendo', color: '--s4', get: (r) => r.load?.states?.move },
+      ] },
+      { title: 'Tiempo real recibido', unit: 'mensajes/s', hint: 'Lo que el servidor reenvía a los clientes.', read: 'Crece con el cuadrado del tamaño de cada tablero (cada uno ve a todos).', series: [
+        { label: 'Cursores', color: '--s1', get: (r) => r.load?.ws.cursorsIn },
+        { label: 'Previews', color: '--s2', get: (r) => r.load?.ws.previewsIn },
+        { label: 'Total', color: '--s3', get: (r) => r.load?.ws.in },
+      ] },
+      { title: 'Contenedor frenado', unit: 'ms por segundo', hint: 'Tiempo que el kernel frenó al contenedor por agotar su cuota de CPU.', read: 'Mayor que 0 = el límite de CPU del contenedor es el cuello (sumado entre núcleos: puede pasar de 1.000).', only: () => R.some((r) => r.agent?.cgroup), series: [
         { label: 'Servidor', color: '--s1', get: (r) => r.agent?.cgroup?.throttledMs },
       ] },
     ];
@@ -171,7 +209,7 @@
       for (const def of defs) {
         const card = document.createElement('div');
         card.className = 'card';
-        card.innerHTML = `<div class="card-h"><h3>${def.title} <span class="unit">${def.unit}</span></h3></div><div class="hint">${def.hint}</div><div class="plot"></div>`;
+        card.innerHTML = `<div class="card-h"><h3>${def.title} <span class="unit">${def.unit}</span></h3></div><div class="hint">${def.hint}</div><div class="plot"></div><div class="hint read"><b>Cómo leerla:</b> ${def.read}</div>`;
         if (def.select) {
           const [key, opts] = def.select;
           const sel = document.createElement('select');
@@ -300,15 +338,22 @@
       const t = thr();
       const b = base();
       const genBusy = mean((r) => (r.load ? Math.max(0, ...r.load.gen.elu) : null));
+      const rest = (k) => mean((r) => restOf(r.load?.ops)?.[k]);
       const items = [
-        ['Usuarios', mean((r) => r.load?.users.sockets), '', 0],
-        ['p95 difusión', mean((r) => r.load?.ops.fanout?.p95), 'ms', 1, t.fanoutP95 != null ? t.fanoutP95 + b : null],
-        ['p95 preview', mean((r) => r.load?.ops.preview?.p95), 'ms', 1, t.previewP95 != null ? t.previewP95 + b : null],
-        ['p95 listar', mean((r) => r.load?.ops.list?.p95), 'ms', 1, t.restP95 != null ? t.restP95 + b : null],
-        ['Errores', mean((r) => r.load?.errors), '/s', 1, 0.5],
-        ['Hilo JS', mean((r) => r.agent?.server?.threads?.main), '%', 0, 90],
-        ['RSS servidor', mean((r) => r.agent?.cgroup?.memMB ?? r.agent?.server?.rssMB), 'MB', 0],
+        ['Usuarios activos', mean((r) => r.load?.users.sockets), '', 0],
+        ['Entran', mean((r) => r.load?.churn?.in), '/s', 1],
+        ['CPU us + sy', mean((r) => r.agent && r.agent.cpu.user + r.agent.cpu.system), '%', 0, 85],
+        ['CPU wa', mean((r) => r.agent?.cpu.iowait), '%', 1, 10],
+        ['Núcleo pico', mean((r) => hottest(r.agent)), '%', 0, 95],
+        ['RES servidor', mean((r) => r.agent?.server?.rssMB), 'MB', 0],
         ['Disco', mean((r) => r.agent && sumDisk(r.agent, 'readIops') + sumDisk(r.agent, 'writeIops')), 'IOPS', 0],
+        ['Disco %util', mean((r) => diskUtil(r.agent)), '%', 0, 90],
+        ['Red entra', mean((r) => (r.agent ? busiest(r.agent).rxMBs : null)), 'MB/s', 2],
+        ['Red sale', mean((r) => (r.agent ? busiest(r.agent).txMBs : null)), 'MB/s', 2],
+        ['REST p50', rest('p50'), 'ms', 1],
+        ['REST p95', rest('p95'), 'ms', 1, t.restP95 != null ? t.restP95 + b : null],
+        ['REST p99', rest('p99'), 'ms', 1],
+        ['Errores', mean((r) => r.load?.errors), '/s', 1, 0.5],
       ];
       q('.kpis').innerHTML =
         items.map(([label, v, unit, d, limit]) => `<div class="kpi ${limit != null && v != null && v > limit ? 'over' : ''}"><b>${label}</b><span>${fmt(v, d)}</span><small>${unit}</small></div>`).join('') +
@@ -322,11 +367,16 @@
           const a = secOf(s.start);
           const cur = end >= a && end <= secOf(s.end);
           const tag = s.invalid ? '<span class="tag neutral">no válido</span>' : s.pass ? '<span class="tag pass">✓ pasa</span>' : '<span class="tag fail">✕ no pasa</span>';
+          const x = s.res ?? {};
+          const pm = (o, d = 0) => (o ? `${fmt(o.avg, d)} / ${fmt(o.max, d)}` : '–');
+          const top = [x.cpuUser, x.cpuSystem, s.res?.iowait, x.cpuIdle].map((o) => fmt(o?.avg, 0)).join(' · ');
+          const r = s.lat?.rest;
           return `<tr data-sec="${a}" class="${cur ? 'current' : ''}"><td class="num">${i + 1}</td>
-            <td class="num">${s.users}</td><td class="num">${s.layout?.boards ?? '–'}</td><td>${tag}</td>
-            <td class="num">${fmt(s.lat.rest?.p95)} ms</td><td class="num">${fmt(s.lat.fanout?.p95)} ms</td><td class="num">${fmt(s.lat.preview?.p95)} ms</td>
-            <td class="num">${fmt(s.errorRate, 2)} %</td><td class="num">${fmt(s.res?.serverMainThread?.avg, 0)} %</td>
-            <td class="num">${fmt(s.res?.serverRssMB?.max, 0)} MB</td><td class="reasons">${esc(s.reasons.join(' · ') || '–')}</td></tr>`;
+            <td class="num">${s.users}</td><td class="num">${fmt(s.arrivalPerSec, 1)}</td><td>${tag}</td>
+            <td class="num">${pm(x.cpuTotal)}</td><td class="num">${fmt(x.cpuHottestCore?.max, 0)}</td><td class="num">${top}</td>
+            <td class="num">${pm(x.serverRssMB)}</td><td class="num">${pm(x.diskIops)}</td><td class="num">${pm(x.diskMBs, 2)}</td><td class="num">${fmt(x.diskUtil?.max, 0)}</td>
+            <td class="num">${fmt(x.netRxMBs?.avg, 2)} · ${fmt(x.netTxMBs?.avg, 2)}</td><td class="num">${r ? `${fmt(r.p50)} · ${fmt(r.p95)} · ${fmt(r.p99)}` : '–'}</td>
+            <td class="num">${fmt(s.errorRate, 2)} %</td><td class="reasons">${esc(s.reasons.join(' · ') || '–')}</td></tr>`;
         })
         .join('');
     }
@@ -350,6 +400,54 @@
         ['Resultado', result],
       ].map(([k, v]) => `<div><b>${k}</b>${v}</div>`).join('');
     }
+
+    // ---------- descargas (se guardan en el equipo de quien mira la página) ----------
+    function save(text, ext, type) {
+      const m = S.meta;
+      const stamp = new Date(S.t0 ?? Date.now()).toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type }));
+      a.download = `${stamp}_${m?.env ?? 'corrida'}_${m?.profile?.id ?? 'prueba'}${ext}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    // CSV con separador ";" y coma decimal: así lo abre Excel en español sin pasos extra.
+    const cell = (v, d = 2) => (v == null || Number.isNaN(v) ? '' : typeof v === 'number' ? String(Math.round(v * 10 ** d) / 10 ** d).replace('.', ',') : `"${String(v).replaceAll('"', '""')}"`);
+    const csv = (head, rows) => '\ufeff' + [head.join(';'), ...rows.map((r) => r.map((v) => cell(v)).join(';'))].join('\r\n');
+    const DL = {
+      raw: () => save(raw.join('\n') + '\n', '.ndjson', 'application/x-ndjson'),
+      seconds: () => {
+        rebuild();
+        const head = ['segundo', 'usuarios_objetivo', 'usuarios_conectados', 'entran_s', 'salen_s', 'cpu_us', 'cpu_sy', 'cpu_wa', 'cpu_id', 'cpu_st', 'cpu_promedio', 'cpu_nucleo_pico', 'hilo_js', 'res_servidor_mb', 'res_mongod_mb', 'mem_contenedor_mb', 'disco_iops_lectura', 'disco_iops_escritura', 'disco_mbs_lectura', 'disco_mbs_escritura', 'disco_util', 'red_entrada_mbs', 'red_salida_mbs', 'rest_p50_ms', 'rest_p95_ms', 'rest_p99_ms', 'difusion_p95_ms', 'errores_s'];
+        const rows = R.map((r, i) => {
+          const a = r.agent;
+          const l = r.load;
+          const rest = restOf(l?.ops);
+          return [i, l?.users.target, l?.users.sockets, l?.churn?.in, l?.churn?.out, a?.cpu.user, a?.cpu.system, a?.cpu.iowait, idle(a), a?.cpu.steal, a?.cpu.busy, hottest(a), a?.server?.threads?.main, a?.server?.rssMB, a?.mongo?.rssMB, a?.cgroup?.memMB,
+            a && sumDisk(a, 'readIops'), a && sumDisk(a, 'writeIops'), a && sumDisk(a, 'readMBs'), a && sumDisk(a, 'writeMBs'), diskUtil(a), a && busiest(a).rxMBs, a && busiest(a).txMBs, rest?.p50, rest?.p95, rest?.p99, l?.ops.fanout?.p95, l?.errors];
+        });
+        save(csv(head, rows), '_por-segundo.csv', 'text/csv');
+      },
+      summary: () => {
+        const stats = [['cpu_total', 'cpuTotal'], ['cpu_nucleo_pico', 'cpuHottestCore'], ['cpu_us', 'cpuUser'], ['cpu_sy', 'cpuSystem'], ['cpu_wa', 'iowait'], ['cpu_id', 'cpuIdle'], ['cpu_st', 'steal'], ['hilo_js', 'serverMainThread'], ['res_servidor_mb', 'serverRssMB'], ['res_mongod_mb', 'mongoRssMB'], ['disco_iops', 'diskIops'], ['disco_mbs', 'diskMBs'], ['disco_util', 'diskUtil'], ['red_entrada_mbs', 'netRxMBs'], ['red_salida_mbs', 'netTxMBs'], ['contenedor_frenado_ms_s', 'throttledMs']];
+        const lats = [['rest', 'REST'], ['login', 'login'], ['register', 'registro'], ['create', 'crear'], ['list', 'listar'], ['join', 'unirse'], ['fanout', 'difusion'], ['preview', 'preview'], ['ping', 'ping']];
+        const head = ['entorno', 'prueba', 'escalon', 'usuarios', 'llegadas_s', 'sesion_media_s', 'segundos_medidos', 'resultado', 'motivo', 'errores_pct',
+          ...stats.flatMap(([n]) => [`${n}_prom`, `${n}_pico`]), ...lats.flatMap(([, n]) => [`${n}_p50_ms`, `${n}_p95_ms`, `${n}_p99_ms`]), 'servidor_rest_p50_ms', 'servidor_rest_p95_ms', 'servidor_rest_p99_ms'];
+        const rows = S.steps.map((s, i) => {
+          const sr = s.srv?.rest;
+          return [S.meta?.env, S.meta?.profile?.name, i + 1, s.users, s.arrivalPerSec, s.sessionSec, s.measuredSec, s.invalid ? 'no válido' : s.pass ? 'pasa' : 'no pasa', s.reasons.join(' · '), s.errorRate,
+            ...stats.flatMap(([, k]) => [s.res?.[k]?.avg, s.res?.[k]?.max]), ...lats.flatMap(([k]) => [s.lat?.[k]?.p50, s.lat?.[k]?.p95, s.lat?.[k]?.p99]), sr?.p50, sr?.p95, sr?.p99];
+        });
+        save(csv(head, rows), '_resumen.csv', 'text/csv');
+      },
+    };
+    root.querySelector('.downloads').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-dl]');
+      if (!b) return;
+      if (S.t0 == null) return alert('Todavía no hay datos.');
+      if (b.dataset.dl === 'summary' && !S.steps.length) return alert('El resumen aparece cuando termina el primer escalón. Mientras tanto puedes bajar «Por segundo» o los datos crudos.');
+      DL[b.dataset.dl]();
+    });
 
     // ---------- reproducción ----------
     function seek(sec) {
@@ -386,7 +484,7 @@
       loadText(text) {
         for (const line of text.split('\n')) {
           if (!line.trim()) continue;
-          try { ingest(JSON.parse(line)); } catch {}
+          try { ingest(JSON.parse(line), line); } catch {}
         }
         if (S.t0 == null) return false;
         draw(true);
@@ -523,7 +621,7 @@
     if (running) {
       const p = running.progress;
       const el = p?.startedAt ? mmss((Date.now() - p.startedAt) / 1000) : '';
-      const what = !p ? 'Reiniciando el servidor…' : p.rest ? `Pausa: todos salen (${p.sec} s)` : `Escalón ${p.step} · ${p.users} usuarios en ${p.layout?.boards ?? '?'} tableros · ${el} de ${mmss(p.sec)}`;
+      const what = !p ? 'Reiniciando el servidor…' : p.rest ? `Pausa: todos salen (${p.sec} s)` : `Escalón ${p.step} · ${p.users} usuarios activos${p.arrivalPerSec ? ` · entran y salen ${fmt(p.arrivalPerSec)}/s` : ''} · ${p.layout?.boards ?? '?'} tableros · ${el} de ${mmss(p.sec)}`;
       r.innerHTML = `<div><b>${running.name}${running.quick ? ' (rápida)' : ''}</b><span>${what}</span></div><button class="btn danger" id="stop">Detener</button>`;
       $('stop').onclick = () => post('api/stop');
     }

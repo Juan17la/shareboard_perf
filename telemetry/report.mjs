@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Convierte corridas (data/raw/*.ndjson) en tablas Markdown con las métricas que pide el enunciado:
-// CPU promedio y pico (y el núcleo más ocupado), memoria residente, disco (IOPS y MB/s),
+// CPU promedio y pico (núcleo más ocupado y columnas us/sy/wa/id de top), memoria residente, disco (IOPS, MB/s y %util de iostat),
 // red (entrada y salida) y latencia p50/p95/p99, escalón por escalón.
 //
 // Uso: node analitics/telemetry/report.mjs data/raw/A.ndjson data/raw/B.ndjson > RESULTADOS.md
@@ -40,11 +40,11 @@ for (const r of runs) {
   out.push('');
 
   out.push('### Recursos (promedio / pico)', '');
-  out.push('| Usuarios | CPU máquina % | Núcleo más ocupado % | Hilo JS % | Servidor total % de un núcleo | RSS servidor MB | RSS mongod MB | Disco IOPS | Disco MB/s | Red entrada MB/s | Red salida MB/s | iowait % | Contenedor frenado ms/s |');
-  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  out.push('| Usuarios | Llegadas/s | CPU máquina % | Núcleo más ocupado % | us % | sy % | wa % | id % | Hilo JS % | Servidor total % de un núcleo | RES servidor MB | RES mongod MB | Disco IOPS | Disco MB/s | Disco %util | Red entrada MB/s | Red salida MB/s | Contenedor frenado ms/s |');
+  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const s of r.steps) {
     const x = s.res;
-    out.push(`| ${s.users} | ${pm(x.cpuTotal)} | ${pm(x.cpuHottestCore, 0)} | ${pm(x.serverMainThread, 0)} | ${pm(x.serverCpu, 0)} | ${pm(x.serverRssMB, 0)} | ${pm(x.mongoRssMB, 0)} | ${pm(x.diskIops, 0)} | ${pm(x.diskMBs, 2)} | ${pm(x.netRxMBs, 1)} | ${pm(x.netTxMBs, 1)} | ${pm(x.iowait)} | ${pm(x.throttledMs, 0)} |`);
+    out.push(`| ${s.users} | ${f(s.arrivalPerSec, 2)} | ${pm(x.cpuTotal)} | ${pm(x.cpuHottestCore, 0)} | ${pm(x.cpuUser)} | ${pm(x.cpuSystem)} | ${pm(x.iowait)} | ${pm(x.cpuIdle)} | ${pm(x.serverMainThread, 0)} | ${pm(x.serverCpu, 0)} | ${pm(x.serverRssMB, 0)} | ${pm(x.mongoRssMB, 0)} | ${pm(x.diskIops, 0)} | ${pm(x.diskMBs, 2)} | ${pm(x.diskUtil)} | ${pm(x.netRxMBs, 1)} | ${pm(x.netTxMBs, 1)} | ${pm(x.throttledMs, 0)} |`);
   }
   out.push('');
 

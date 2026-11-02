@@ -78,11 +78,13 @@ En http://localhost:7070:
 1. **Entorno → Nube (EC2)**.
 2. **IP privada del servidor** y **token** (en el servidor: `cat ~/shareboard_perf/data/token.txt`).
 3. **Preparar**: los cuatro puntos en verde.
-4. Pruebas en orden ([../PRUEBAS.md](../PRUEBAS.md)): Reposo, Pequeña x2, Mediana x2, Grande x2, Inicio de clase, Escalones (al final).
+4. Pruebas en orden ([../PRUEBAS.md](../PRUEBAS.md)): Reposo, Baja x2, Media x2, Alta x2, Server killer (al final).
 
 ## 9. Traer los resultados a tu PC
 
-En tu PC, desde la raíz del proyecto:
+Lo más fácil: en **Resultados**, abre cada corrida y usa **Resumen (.csv)**, **Por segundo (.csv)** o **Datos crudos (.ndjson)**. La página llega por el túnel SSH, así que el navegador guarda los archivos directamente en tu PC.
+
+Para traerlas todas de una vez, en tu PC, desde la raíz del proyecto:
 
 ```bash
 mkdir -p analitics/data/raw-aws

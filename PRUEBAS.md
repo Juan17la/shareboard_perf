@@ -37,20 +37,37 @@ Todo esto está en `telemetry/profiles/flujo.json` (flujo y roles) y en cada `te
 
 ---
 
-## 2. Las seis pruebas
+## 2. Las pruebas
 
-Cada carga sostenida: **1 minuto de llegada** (los usuarios entran escalonados) y **5 minutos medidos**.
+La carga **no se detiene** cuando se llega al número de usuarios: cada prueba mantiene un número fijo de **usuarios activos** y, durante toda la prueba, unos terminan su sesión y salen mientras otros entran. Por la ley de Little:
 
-| # | Prueba | Usuarios | Tableros | Duración | Pregunta |
-|---|---|---|---|---|---|
-| 1 | Reposo | 0 | 0 | 3 min | ¿Cuánto consume la máquina sin nadie? |
-| 2 | Carga pequeña | 25 | 3 | 6 min | ¿Soporta la hora pico de 1.000 registrados? |
-| 3 | Carga mediana | 250 | 46 | 6 min | ¿Soporta la hora pico de 10.000 registrados? |
-| 4 | Carga grande | 1.000 | 184 | 6 min | ¿Soporta la hora pico de 50.000 registrados? |
-| 5 | Inicio de clase | 250 → 370 | 46 → 50 | 8 min | Si entran 4 clases (120 logins) en 60 s, ¿lo notan los que ya estaban? |
-| 6 | Escalones | 250 → 370 → 450 → 500 → 1.000, sin pausa | 46 → 184 | 30 min | ¿En qué punto deja de rendir y qué se rompe primero? |
+> usuarios activos = llegadas por segundo × duración media de la sesión (2/s × 120 s = **240**)
 
-La casilla **rápida** acorta todo a la mitad. Sirve para ensayar; **para el informe usa siempre la versión normal**.
+Cada llegada hace lo que haría una persona real:
+
+| Al entrar | Proporción |
+|---|---|
+| Inicia sesión (login) | 95 % |
+| Se registra como cuenta nueva (scrypt + escritura en Mongo) | 5 % |
+| Lista sus tableros | 100 % (y de nuevo cada ~5 min) |
+| Crea un tablero | 5 % |
+| Se une a su tablero y trabaja (mira, mueve el cursor, dibuja, mueve elementos) según su rol | 100 % |
+
+**Todas las pruebas duran lo mismo (12,5 min)**; solo cambia el nivel de carga: 2 min de llegada, 30 s de estabilización y **10 minutos medidos**.
+
+| # | Prueba | Entran y salen | Sesión media | Usuarios activos | Sesiones por hora | Duración | Pregunta |
+|---|---|---|---|---|---|---|---|
+| 1 | Reposo | – | – | 0 | – | 12,5 min | ¿Cuánto consume la máquina sin nadie? |
+| 2 | Carga baja | 1/s | 2 min | 120 | 3.600 | 12,5 min | Un colegio o una facultad en hora pico |
+| 3 | Carga media | 2/s | 2 min | 240 | 7.200 | 12,5 min | Varias facultades o empresas pequeñas a la vez |
+| 4 | Carga alta | 2/s | 5 min | 600 | 7.200 | 12,5 min | Una universidad grande: clases y reuniones largas, mucho tiempo real |
+| 5 | Server killer | 20/s | 5 min | 6.000 | 72.000 | 12,5 min | La alta x10: ¿qué se rompe primero y cómo cae? |
+
+Baja y media se diferencian en el **ritmo de entrada** (logins y registros: CPU por scrypt). Media y alta tienen el mismo ritmo de entrada, pero en la alta la gente se queda más: se diferencian en el **tiempo real** (cursores y trazos que se reenvían a todo el tablero). Server killer no está hecha para pasar; si los errores pasan del 20 % o el contenedor llega al 95 % de su memoria, el laboratorio la corta y anota el motivo.
+
+En la página, la gráfica **Entradas y salidas** muestra que los logins siguen hasta el último segundo.
+
+La casilla **rápida** mide 3 minutos en lugar de 10. Sirve para ensayar; **para el informe usa siempre la versión normal**.
 
 ---
 
@@ -62,7 +79,7 @@ Lo que **debe ser igual** en las tres máquinas:
 |---|---|
 | Mismo código del servidor | No cambies `server/` durante la campaña. Anota el commit (`git -C server log -1 --oneline`) |
 | Misma versión de Node | El laboratorio usa Node 22 en el PC; en EC2 se instala `nvm install 22` |
-| Misma base de datos | **Reiniciar datos** antes de empezar cada máquina: 3.000 cuentas y 3.000 tableros vacíos |
+| Misma base de datos | **Reiniciar datos** antes de empezar cada máquina: 6.000 cuentas y 6.000 tableros vacíos |
 | Mismas pruebas | Versión normal (sin "rápida"), mismos perfiles |
 | Servidor en frío | El laboratorio reinicia el servidor antes de cada prueba (automático) |
 | Mismo criterio | Los umbrales están en los perfiles; no los cambies entre máquinas |
@@ -91,16 +108,15 @@ Solo en el PC (nativo y contenedores):
 | Paso | Prueba | PC nativo | Contenedor 1 CPU | Contenedor 2 CPU | EC2 t3.small |
 |---|---|---|---|---|---|
 | 1 | Reposo | ✓ | ✓ | ✓ | ✓ |
-| 2 | Carga pequeña | ✓ x2 | ✓ x2 | | ✓ x2 |
-| 3 | Carga mediana | ✓ x2 | ✓ x2 | ✓ x2 | ✓ x2 |
-| 4 | Carga grande | ✓ x2 | ✓ x2 | ✓ x2 | ✓ x2 |
-| 5 | Inicio de clase | ✓ | ✓ | | ✓ |
-| 6 | Escalones | ✓ | ✓ | ✓ | ✓ (al final) |
+| 2 | Carga baja | ✓ x2 | ✓ x2 | ✓ x2 | ✓ x2 |
+| 3 | Carga media | ✓ x2 | ✓ x2 | ✓ x2 | ✓ x2 |
+| 4 | Carga alta | ✓ x2 | ✓ x2 | ✓ x2 | ✓ x2 |
+| 5 | Server killer | ✓ | ✓ | ✓ | ✓ (al final) |
 | | **Tiempo aproximado** | ~2 h | ~2 h | ~1,5 h | ~2 h |
 
 - **x2:** las tres cargas se corren dos veces. Si el p95 de las dos difiere más de 20 %, corre una tercera y usa la mediana. Así puedes decir en la sustentación que el número es estable.
 - **Contenedor 2 CPU:** solo repite lo necesario para responder "¿un segundo núcleo le sirve a un servidor con un solo hilo de JavaScript?".
-- **EC2:** los Escalones van al final, porque es la que gasta los créditos de CPU de la t3. Antes de empezar anota en CloudWatch el `CPUCreditBalance`.
+- **EC2:** Server killer va al final, porque es la que gasta los créditos de CPU de la t3. Antes de empezar anota en CloudWatch el `CPUCreditBalance`.
 
 ### 4.3 Qué revisar después de cada prueba
 
@@ -127,7 +143,7 @@ node analitics/telemetry/report.mjs analitics/data/raw/<corrida-pc>.ndjson anali
 | Pequeña (25): ¿pasa? p95 preview | | | | |
 | Mediana (250): ¿pasa? p95 preview | | | | |
 | Grande (1.000): ¿pasa? p95 preview | | | | |
-| Escalones: último nivel que pasa (250, 370, 450, 500 o 1.000) | | | | |
+| Última carga que pasa (baja, media o alta) y qué rompió primero en Server killer | | | | |
 | Hilo JS en el máximo (%) | | | | |
 | RSS del servidor en el máximo (MB) | | | | |
 | Disco en el máximo (IOPS) | | | | |
@@ -137,7 +153,7 @@ node analitics/telemetry/report.mjs analitics/data/raw/<corrida-pc>.ndjson anali
 
 ### 5.2 Dónde espera la aplicación
 
-En el **primer escalón que falla** de la prueba Escalones, mira en este orden:
+En la **primera carga que falla** (o en Server killer), mira en este orden:
 
 | Si ves esto | Espera por | Componente |
 |---|---|---|

@@ -1,6 +1,0 @@
-{ "id": "escalones", "name": "Escalones", "order": 6,
-  "question": "La mezcla realista creciendo sin pausa: 250, 370, 450, 500 y 1.000 usuarios, 5 min medidos en cada uno. ¿Dónde deja de rendir?",
-  "groups": [{ "type": "class", "count": 4, "size": 30 }, { "type": "team", "count": 22, "size": 5 }, { "type": "solo", "count": 20 }], "repeat": true,
-  "plan": { "mode": "steps", "users": [250, 370, 450, 500, 1000], "stepSec": 360, "warmSec": 60, "rampSec": 60 },
-  "quick": { "stepSec": 180, "warmSec": 30, "rampSec": 30 },
-  "thresholds": { "restP95": 300, "loginP95": 1000, "fanoutP95": 150, "previewP95": 150, "pingP99": 100, "errorRate": 0.01 } }

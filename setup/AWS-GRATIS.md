@@ -24,7 +24,7 @@ A 500 usuarios el servidor envía unos **38 MB/s (~300 Mbps)** a los clientes. S
 Funciona igual, con dos avisos:
 
 - 1 GB de RAM es poco para Mongo y el servidor juntos. El script agrega 2 GB de swap para que compile; anótalo en el informe.
-- El generador en t3.micro se satura antes. Si la interfaz marca **Generador saturado**, ese escalón no vale. En ese caso corre solo Pequeña y Mediana, o usa tu PC como generador para esas dos.
+- El generador en t3.micro se satura antes. Si la interfaz marca **Generador saturado**, ese escalón no vale. En ese caso corre solo Baja y Media, o usa tu PC como generador para esas dos.
 
 ### 1.3 Lo que sí puede costar
 
@@ -174,8 +174,8 @@ El servidor imprime el token en `tmux` (y lo guarda en `~/shareboard_perf/data/t
    Si tu laboratorio local está usando el 7070, ciérralo antes.
 2. Abre **http://localhost:7070**. Es la interfaz del generador, aunque la veas en tu navegador.
 3. **Entorno → Nube (EC2)**: escribe la **IP privada** del servidor y el **token**. Pulsa **Preparar**.
-4. Corre las pruebas en el mismo orden que en el PC ([`../PRUEBAS.md`](../PRUEBAS.md)): Reposo, Pequeña x2, Mediana x2, Grande x2, Inicio de clase y Escalones (al final).
-5. Antes de los Escalones, anota `CPUCreditBalance` en **CloudWatch → Metrics → EC2 → Per-Instance Metrics** del servidor. Repítelo al final: si los créditos llegan a cero, la t3 se limita a su línea base (20 % por vCPU en t3.small).
+4. Corre las pruebas en el mismo orden que en el PC ([`../PRUEBAS.md`](../PRUEBAS.md)): Reposo, Baja x2, Media x2, Alta x2 y Server killer (al final).
+5. Antes de Server killer, anota `CPUCreditBalance` en **CloudWatch → Metrics → EC2 → Per-Instance Metrics** del servidor. Repítelo al final: si los créditos llegan a cero, la t3 se limita a su línea base (20 % por vCPU en t3.small).
 
 ## 8. Traer los resultados a tu PC
 
@@ -187,7 +187,7 @@ scp -i ~/.ssh/shareboard-perf.pem "ubuntu@<IP pública del generador>:shareboard
 Luego en tu laboratorio local, **Resultados → Abrir archivo**, o las tablas para el informe:
 
 ```bash
-node analitics/telemetry/report.mjs analitics/data/raw/<pc-escalones>.ndjson analitics/data/raw/<docker-escalones>.ndjson analitics/data/raw-aws/<aws-escalones>.ndjson > analitics/resultados/TABLAS.md
+node analitics/telemetry/report.mjs analitics/data/raw/<pc-alta>.ndjson analitics/data/raw/<docker-alta>.ndjson analitics/data/raw-aws/<aws-alta>.ndjson > analitics/resultados/TABLAS.md
 ```
 
 ## 9. Apagar todo

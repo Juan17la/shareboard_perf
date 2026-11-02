@@ -1,5 +1,5 @@
 {
-  "_comentario": "Flujo de un usuario real. Fuente: web/src/lib/config.ts y analitics/INVESTIGACION-CARGA.md. Lo usan todas las pruebas. sessionMeanSec: duración media de una sesión; usuarios activos ÷ sesión = llegadas por segundo (240 ÷ 120 s = 2/s); cada prueba puede cambiarla con plan.sessionSec. registerRatio: fracción de llegadas que son cuentas nuevas (registro en vez de login). createRatio: fracción que crea un tablero al entrar.",
+  "_comentario": "Flujo de un usuario real. Fuente: web/src/lib/config.ts y docs/CARGAS.md. Lo usan todas las pruebas. sessionMeanSec: duración media de una sesión; usuarios activos ÷ sesión = llegadas por segundo (240 ÷ 120 s = 2/s); cada prueba puede cambiarla con plan.sessionSec. registerRatio: fracción de llegadas que son cuentas nuevas (registro en vez de login). createRatio: fracción que crea un tablero al entrar.",
   "cursorMs": 45,
   "previewMs": 33,
   "pingMs": 20000,

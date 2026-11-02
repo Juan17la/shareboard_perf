@@ -15,6 +15,7 @@ All notable changes to the Shareboard server. The format follows
 
 ### Changed
 
+- Licensed under the MIT License, replacing PolyForm Noncommercial 1.0.0.
 - Changing or resetting a password ends every other session (session tokens carry the account's `tokenVersion`).
 - Passwords are hashed with async scrypt at OWASP's parameters (N=2^14, r=8, p=5) off the event loop; older hashes still sign in and are upgraded on the next sign-in.
 - New passwords are refused if they are common or equal to the username or email.

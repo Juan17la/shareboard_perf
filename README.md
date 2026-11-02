@@ -42,4 +42,4 @@ Elige el entorno, pulsa **Preparar** y corre las pruebas. Los resultados se desc
 
 ## Licencia
 
-[PolyForm Noncommercial 1.0.0](LICENSE).
+[MIT](LICENSE).

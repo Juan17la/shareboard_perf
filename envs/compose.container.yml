@@ -21,12 +21,12 @@ services:
         EXPOSE 3000
     depends_on: [mongo]
     ports:
-      - "3000:3000"
+      - "${SERVER_PORT:-3000}:3000"
     environment:
       MONGO_URL: mongodb://mongo:27017
       MONGO_DB: shareboard_carga
       NODE_ENV: production
-      TOKEN_SECRET: carga-local-no-usar-en-produccion
+      TOKEN_SECRET: carga-local
       REGISTER_PER_HOUR: "1000000"
       LOGIN_PER_MINUTE: "1000000"
       CREATE_BOARD_PER_HOUR: "1000000"

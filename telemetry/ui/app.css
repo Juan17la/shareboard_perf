@@ -189,3 +189,19 @@ tbody tr.current { box-shadow: inset 3px 0 0 var(--accent); background: var(--bg
 .guide td:last-child { min-width: 320px; color: var(--text-2); }
 .hint.read { margin: 6px 0 0; color: var(--text-2); }
 .hint.read b { font-weight: 600; }
+
+.navlink { color: var(--text-2); text-decoration: none; padding: 6px 12px; border-radius: 6px; }
+.navlink:hover { background: var(--bg); color: var(--text); }
+.guide summary a { color: var(--accent); font-weight: 400; }
+.waits-card, .ep-card, .grid.two { margin-top: 10px; }
+.waits-verdict { font-size: 15px; margin: 8px 0 0; }
+td.why { white-space: normal; min-width: 260px; color: var(--text-2); }
+.lvl { display: inline-flex; padding: 1px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; white-space: nowrap; }
+.lvl.ok { color: var(--good); }
+.lvl.warn { color: #b57a00; }
+.lvl.bad { color: var(--critical); }
+.lvl.none { color: var(--muted); }
+.share { width: 80px; height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; display: inline-block; margin-right: 6px; vertical-align: middle; }
+.share i { display: block; height: 100%; background: var(--accent); }
+.curve { width: 100%; height: 240px; display: block; }
+.stab td:first-child { color: var(--text-2); }

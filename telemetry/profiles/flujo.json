@@ -1,17 +1,48 @@
 {
-  "_comentario": "Flujo de un usuario real. Fuente: web/src/lib/config.ts y docs/CARGAS.md. Lo usan todas las pruebas. sessionMeanSec: duración media de una sesión; usuarios activos ÷ sesión = llegadas por segundo (240 ÷ 120 s = 2/s); cada prueba puede cambiarla con plan.sessionSec. registerRatio: fracción de llegadas que son cuentas nuevas (registro en vez de login). createRatio: fracción que crea un tablero al entrar.",
+  "_comentario": "Comportamiento de la población. Explicación y fuentes en docs/CARGAS.md. Las frecuencias (cursorMs, previewMs, pingMs) salen del cliente web; lo demás son supuestos de diseño: cámbialos aquí, no en el código.",
+
   "cursorMs": 45,
   "previewMs": 33,
   "pingMs": 20000,
-  "listSec": 300,
-  "sessionMeanSec": 120,
-  "createRatio": 0.05,
-  "registerRatio": 0.05,
-  "keepElements": 30,
-  "meanSec": { "watch": 12, "cursor": 2.5, "draw": 2, "move": 1.5 },
+
+  "rooms": [
+    { "type": "solo",     "weight": 45, "size": [1, 1],   "minutes": 15, "joinWindowSec": 0,   "roles": { "lead": "solo", "rest": "solo" }, "createRatio": 0.3 },
+    { "type": "small",    "weight": 30, "size": [2, 3],   "minutes": 20, "joinWindowSec": 60,  "roles": { "lead": "participant", "rest": "participant" } },
+    { "type": "team",     "weight": 18, "size": [4, 8],   "minutes": 30, "joinWindowSec": 120, "roles": { "lead": "presenter", "rest": "participant" } },
+    { "type": "workshop", "weight": 5,  "size": [10, 15], "minutes": 45, "joinWindowSec": 180, "roles": { "lead": "presenter", "rest": "participant" } },
+    { "type": "class",    "weight": 2,  "size": [25, 35], "minutes": 50, "joinWindowSec": 240, "roles": { "lead": "presenter", "rest": "viewer" } }
+  ],
+
+  "journeys": {
+    "solo":  { "resume": 0.80, "login": 0.17, "register": 0.03 },
+    "group": { "resume": 0.52, "guest": 0.35, "login": 0.12, "register": 0.01 }
+  },
+  "thinkSec": { "login": [5, 15], "register": [20, 40], "pick": [2, 8], "name": [3, 10] },
+  "retries": 2,
+  "earlyLeaveRatio": 0.15,
+  "reconnectEveryMin": 20,
+  "listEveryMin": 20,
+  "keepOwnElements": 5,
+  "pinBoardRatio": 0.2,
+  "pin": "4827",
+
+  "meanSec": { "watch": 25, "cursor": 4, "draw": 3, "shape": 4, "text": 8, "move": 2.5, "erase": 1, "away": 60 },
+  "pointer": { "moveSec": [0.4, 1.5], "pauseSec": [0.2, 1] },
+  "next": {
+    "watch":  { "cursor": 0.62, "draw": 0.08, "shape": 0.03, "text": 0.05, "move": 0.02, "away": 0.20 },
+    "cursor": { "watch": 0.65, "draw": 0.14, "shape": 0.05, "text": 0.05, "move": 0.06, "erase": 0.05 },
+    "draw":   { "draw": 0.25, "cursor": 0.40, "watch": 0.27, "erase": 0.08 },
+    "shape":  { "shape": 0.20, "cursor": 0.40, "text": 0.20, "watch": 0.20 },
+    "text":   { "cursor": 0.50, "watch": 0.50 },
+    "move":   { "move": 0.20, "cursor": 0.50, "watch": 0.30 },
+    "erase":  { "draw": 0.30, "cursor": 0.50, "watch": 0.20 },
+    "away":   { "watch": 1 }
+  },
   "roles": {
-    "collaborator": { "watch": 0.55, "cursor": 0.25, "draw": 0.12, "move": 0.08 },
-    "presenter": { "watch": 0.20, "cursor": 0.35, "draw": 0.35, "move": 0.10 },
-    "viewer": { "watch": 0.85, "cursor": 0.12, "draw": 0.03, "move": 0 }
-  }
+    "presenter":   { "watch": 0.7, "cursor": 1.3, "draw": 2, "shape": 1.5, "text": 1.2, "move": 1.2, "erase": 1, "away": 0.1 },
+    "participant": { "watch": 1, "cursor": 1, "draw": 1, "shape": 1, "text": 1, "move": 1, "erase": 1, "away": 1 },
+    "viewer":      { "watch": 1.5, "cursor": 0.5, "draw": 0.1, "shape": 0.05, "text": 0.1, "move": 0.05, "erase": 0.05, "away": 1.5 },
+    "solo":        { "watch": 0.8, "cursor": 1, "draw": 1.3, "shape": 1.2, "text": 1.2, "move": 1, "erase": 1.2, "away": 1 }
+  },
+  "elementMix": { "image": 0.01 }
 }

@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 
 import { merge, summary, round } from './hist.mjs';
-import { buildLayout, describe } from './layout.mjs';
 import { SERVER } from './paths.mjs';
+import { createScheduler } from './rooms.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const ARRIVE_SEC = 120;
@@ -19,15 +19,17 @@ const sleep = (ms, signal) =>
     signal?.addEventListener('abort', () => (clearTimeout(t), res()), { once: true });
   });
 
+// Muestra mínima para juzgar un percentil: con 30 muestras, el p95 es el segundo peor valor (ruido, no medida).
+const MIN_N = { p50: 20, p95: 100, p99: 1000 };
+
 /**
  * opts: { profile, env, target, agentUrl, token, seed, workers, signal, onProgress }
- * Devuelve el resultado ({ maxGoodUsers, ... } en la escalera).
+ * Devuelve cuántos escalones pasaron.
  */
 export async function runTest(opts, write) {
   const { profile, seed, signal } = opts;
   const plan = profile.plan;
   const thr = profile.thresholds ?? {};
-  const slots = buildLayout(profile, seed.accounts.length);
   const t0 = Date.now();
   const event = (kind, extra = {}) => write({ t: 'event', ts: Date.now(), kind, ...extra });
   const progress = (p) => opts.onProgress?.(p);
@@ -120,43 +122,40 @@ export async function runTest(opts, write) {
 
   // ---------- reloj de 1 s ----------
   let users = 0;
-  let rampFrom = 0;
-  let rampTo = 0;
-  let rampStart = 0;
-  let rampMs = (plan.rampSec ?? 30) * 1000;
+  let scheduler = null;
   let stepStart = 0;
   let abortStep = null;
   const loads = [];
   let cpuPrev = process.cpuUsage();
-  // Sesión media (s): con usuarios activos fijos, llegadas/s = usuarios ÷ sesión (ley de Little).
-  const sessionSec = plan.sessionSec ?? profile.flow?.sessionMeanSec ?? 120;
-  const setUsers = (n, ramp = plan.rampSec ?? 30) => {
-    rampFrom = users;
-    rampTo = n;
-    rampStart = Date.now();
-    rampMs = ramp * 1000;
-  };
 
   const tick = setInterval(() => {
-    const k = rampMs ? Math.min(1, (Date.now() - rampStart) / rampMs) : 1;
-    users = Math.round(rampFrom + (rampTo - rampFrom) * k);
-    for (const w of workers) w.postMessage({ type: 'users', users, sessionSec });
+    scheduler?.tick(Date.now(), users);
 
     const parts = [...pending.values()];
     pending.clear();
     const h = {};
     const err = {};
+    const att = {};
+    const journeys = {};
+    let entered = 0;
+    let gaveUp = 0;
+    let reconnects = 0;
     let http = 0;
     let active = 0;
     let sockets = 0;
     let left = 0;
     const ws = { out: 0, in: 0, bytesIn: 0, bytesOut: 0, cursorsIn: 0, previewsIn: 0 };
-    const states = { watch: 0, cursor: 0, draw: 0, move: 0 };
+    const states = {};
     const elu = [];
     for (const p of parts) {
       active += p.active;
       sockets += p.sockets;
       left += p.st.left;
+      entered += p.st.entered;
+      gaveUp += p.st.gaveUp;
+      reconnects += p.st.reconnects;
+      for (const [k, v] of Object.entries(p.st.att)) att[k] = (att[k] ?? 0) + v;
+      for (const [k, v] of Object.entries(p.st.journeys)) journeys[k] = (journeys[k] ?? 0) + v;
       elu.push(p.elu);
       http += p.st.http;
       ws.out += p.st.wsOut;
@@ -165,7 +164,7 @@ export async function runTest(opts, write) {
       ws.bytesOut += p.st.bytesOut;
       ws.cursorsIn += p.st.cursorsIn;
       ws.previewsIn += p.st.previewsIn;
-      for (const k in states) states[k] += p.st.states[k];
+      for (const [k, v] of Object.entries(p.st.states)) states[k] = (states[k] ?? 0) + v;
       for (const [kind, hh] of Object.entries(p.st.h)) merge((h[kind] ??= {}), hh);
       for (const [code, c] of Object.entries(p.st.err)) err[code] = (err[code] ?? 0) + c;
     }
@@ -181,8 +180,13 @@ export async function runTest(opts, write) {
       t: 'load',
       ts: Date.now(),
       users: { target: users, active, sockets },
-      // Rotación: entradas = logins y registros completados, salidas = sesiones terminadas en este segundo.
-      churn: { in: (h.login ? summary(h.login).n : 0) + (h.register ? summary(h.register).n : 0), out: left },
+      // Rotación: entradas = usuarios que llegaron al tablero en este segundo, salidas = sesiones terminadas.
+      churn: { in: entered, out: left },
+      gaveUp,
+      reconnects,
+      journeys,
+      rooms: scheduler?.stats().byType,
+      att,
       states,
       rps: http,
       ops,
@@ -194,15 +198,10 @@ export async function runTest(opts, write) {
     write(rec);
     loads.push(rec);
 
-    // Corte de seguridad: solo con datos de ESTE escalón (al menos 15 s), para no arrastrar errores del anterior.
-    if (!abortStep) return;
-    const last = loads.filter((r) => r.ts >= stepStart).slice(-10);
-    if (Date.now() - stepStart < 15_000 || last.length < 10) return;
-    const okN = last.reduce((s, r) => s + Object.values(r.ops).reduce((x, o) => x + (o.n ?? 0), 0), 0);
-    const errN = last.reduce((s, r) => s + r.errors, 0);
+    // Corte de seguridad: un contenedor por matar por memoria ya no mide nada. Los errores no cortan la prueba:
+    // aunque falle, debe durar lo mismo y mostrar cómo se comporta el servidor saturado.
     const cg = lastAgent?.cgroup;
-    if (errN > 50 && errN / (okN + errN) > 0.2) abortStep(`errores ${Math.round((errN / (okN + errN)) * 100)} % (${topError(last)})`);
-    else if (cg?.memLimitMB && cg.memMB / cg.memLimitMB > 0.95) abortStep(`memoria del contenedor al ${Math.round((cg.memMB / cg.memLimitMB) * 100)} %`);
+    if (abortStep && Date.now() - stepStart > 15_000 && cg?.memLimitMB && cg.memMB / cg.memLimitMB > 0.95) abortStep(`memoria del contenedor al ${Math.round((cg.memMB / cg.memLimitMB) * 100)} %`);
   }, 1000);
 
   // ---------- un escalón ----------
@@ -211,16 +210,21 @@ export async function runTest(opts, write) {
     if (signal?.aborted) return null;
     stepStart = Date.now();
     // Con measureSec: llegada en ARRIVE_SEC (igual en todas las pruebas, así todas duran lo mismo),
-    // 30 s de estabilización y measureSec medidos. Luego entran y salen n ÷ sesión usuarios por segundo.
-    const rate = n ? n / sessionSec : 0;
+    // 30 s de estabilización y measureSec medidos.
     const measureSec = o.measureSec ?? plan.measureSec;
     const rampSec = o.rampSec ?? (measureSec ? ARRIVE_SEC : plan.rampSec ?? 60);
     const warmSec = o.warmSec ?? (measureSec ? Math.ceil(rampSec) + 30 : plan.warmSec ?? 60);
     if (measureSec) sec = warmSec + measureSec;
-    const layout = describe(slots, n);
-    setUsers(n, rampSec);
-    event('step-start', { users: n, sec, stepKind: kind, layout, arrivalPerSec: round(rate, 2), sessionSec });
-    progress({ step: results.length + 1, users: n, layout, kind, startedAt: stepStart, sec, arrivalPerSec: round(rate, 2) });
+    users = n;
+    scheduler = createScheduler({
+      flow: profile.flow,
+      boards: seed.boards,
+      accounts: seed.accounts.length,
+      rampEndAt: stepStart + rampSec * 1000,
+      send: (member) => workers[member.i % W].postMessage({ type: 'member', member }),
+    });
+    event('step-start', { users: n, sec, stepKind: kind });
+    progress({ step: results.length + 1, users: n, kind, startedAt: stepStart, sec });
     const cut = await new Promise((res) => {
       const t = setTimeout(() => res(null), sec * 1000);
       const stop = () => (clearTimeout(t), res('detenida por el usuario'));
@@ -232,7 +236,7 @@ export async function runTest(opts, write) {
     // Si se cortó antes de terminar el calentamiento, se resume lo que hubo.
     const from = end - stepStart > warmSec * 1000 + 10_000 ? stepStart + warmSec * 1000 : stepStart;
     const s = summarize(n, kind, from, end);
-    Object.assign(s, { start: stepStart, end, layout, arrivalPerSec: round(rate, 2), sessionSec });
+    Object.assign(s, { start: stepStart, end, measureFrom: from });
     if (cut) {
       s.pass = false;
       s.aborted = true;
@@ -247,17 +251,34 @@ export async function runTest(opts, write) {
     const win = loads.filter((r) => r.ts >= from && r.ts <= to);
     const h = {};
     const errByCode = {};
+    const attempts = {};
+    const journeys = {};
     let err = 0;
-    let okN = 0;
     for (const r of win) {
-      for (const [k, o] of Object.entries(r.ops)) merge((h[k] ??= {}), o.h);
+      for (const [k, o] of Object.entries(r.ops)) if (o.h) merge((h[k] ??= {}), o.h);
       for (const [c, v] of Object.entries(r.err)) errByCode[c] = (errByCode[c] ?? 0) + v;
+      for (const [k, v] of Object.entries(r.att ?? {})) attempts[k] = (attempts[k] ?? 0) + v;
+      for (const [k, v] of Object.entries(r.journeys ?? {})) journeys[k] = (journeys[k] ?? 0) + v;
       err += r.errors;
-      okN += Object.values(r.ops).reduce((x, o) => x + (o.n ?? 0), 0);
     }
     const lat = {};
     for (const [k, hh] of Object.entries(h)) lat[k] = summary(hh);
     lat.rest = summary(['list', 'join', 'create'].reduce((acc, k) => merge(acc, h[k] ?? {}), {}));
+    lat.auth = summary(['login', 'register'].reduce((acc, k) => merge(acc, h[k] ?? {}), {}));
+
+    // Errores por operación: cada endpoint contra sus propios intentos. Nada de diluirlos entre mensajes de WebSocket.
+    const secs = Math.max(1, Math.round((to - from) / 1000));
+    const byOp = {};
+    for (const k of ['login', 'register', 'list', 'create', 'join']) {
+      const tried = attempts[k] ?? 0;
+      const failed = Object.entries(errByCode).filter(([c]) => c.startsWith(`${k}:`)).reduce((t, [, v]) => t + v, 0);
+      byOp[k] = { attempts: tried, failed, errorPct: tried ? round((failed / tried) * 100, 2) : 0, perSec: round(tried / secs, 3) };
+    }
+    const restTried = Object.values(byOp).reduce((t, o) => t + o.attempts, 0);
+    const restFailed = Object.values(byOp).reduce((t, o) => t + o.failed, 0);
+    const wsErrors = Object.entries(errByCode).filter(([c]) => c.startsWith('ws:')).reduce((t, [, v]) => t + v, 0);
+    const entered = win.reduce((t, r) => t + (r.churn?.in ?? 0), 0);
+    const gaveUp = win.reduce((t, r) => t + (r.gaveUp ?? 0), 0);
 
     const aw = agents.filter((r) => r.ts >= from && r.ts <= to).map((r) => r.s);
     const srvH = {};
@@ -286,6 +307,7 @@ export async function runTest(opts, write) {
       steal: stat((s) => s.cpu?.steal),
       serverCpu: stat((s) => s.server?.cpu),
       serverMainThread: stat((s) => s.server?.threads?.main),
+      serverLibuv: stat((s) => s.server?.threads?.['libuv-worker']),
       serverRssMB: stat((s) => s.server?.rssMB),
       mongoCpu: stat((s) => s.mongo?.cpu),
       mongoRssMB: stat((s) => s.mongo?.rssMB),
@@ -297,78 +319,69 @@ export async function runTest(opts, write) {
       powerW: stat((s) => s.powerW),
       tempC: stat((s) => s.tempC),
     };
-    const genElu = win.length ? round(win.reduce((s, r) => s + Math.max(0, ...r.gen.elu), 0) / win.length, 2) : null;
+    // El hilo generador más ocupado, percentil 95 de sus segundos: el promedio escondía los picos.
+    const genSorted = win.map((r) => Math.max(0, ...r.gen.elu)).sort((x, y) => x - y);
+    const genElu = genSorted.length ? round(genSorted[Math.floor(genSorted.length * 0.95)], 2) : null;
 
     const reasons = [];
-    const check = (name, v, limit) => {
-      if (v != null && limit != null && v > limit) reasons.push(`${name} ${round(v, 0)} ms > ${limit}`);
+    const notes = [];
+    const check = (name, s, p, limit) => {
+      if (!s || limit == null) return;
+      if (s.n < MIN_N[p]) return notes.push(`${name}: solo ${s.n} muestras, no se juzga`);
+      const v = s[p] - baseMs;
+      if (v > limit) reasons.push(`${name} ${round(v, 0)} ms > ${limit}`);
     };
-    check('p95 REST', lat.rest && lat.rest.p95 - baseMs, thr.restP95);
-    check('p95 login', lat.login && lat.login.p95 - baseMs, thr.loginP95);
-    check('p95 registro', lat.register && lat.register.p95 - baseMs, thr.loginP95);
-    check('p95 difusión', lat.fanout && lat.fanout.p95 - baseMs, thr.fanoutP95);
-    check('p95 preview', lat.preview && lat.preview.p95 - baseMs, thr.previewP95);
-    check('p99 ping', lat.ping && lat.ping.p99 - baseMs, thr.pingP99);
-    const errorRate = okN + err ? err / (okN + err) : 0;
+    check('p95 REST', lat.rest, 'p95', thr.restP95);
+    check('p95 autenticación', lat.auth, 'p95', thr.loginP95);
+    check('p95 difusión', lat.fanout, 'p95', thr.fanoutP95);
+    check('p95 preview', lat.preview, 'p95', thr.previewP95);
+    check('p99 ping', lat.ping, 'p99', thr.pingP99);
+    const errorRate = restTried ? restFailed / restTried : 0;
     if (thr.errorRate != null && errorRate > thr.errorRate) reasons.push(`errores ${round(errorRate * 100, 1)} % (${topError(win)})`);
-    if (!okN && n > 0) reasons.push('ninguna operación completada');
+    if (!restTried && !lat.ping && n > 0) reasons.push('ninguna operación completada');
     const invalid = genElu != null && genElu > 0.85;
     if (invalid) reasons.push('generador saturado: no válido');
-    return { users: n, kind, measuredSec: Math.round((to - from) / 1000), pass: reasons.length === 0, invalid, reasons, lat, srv, errorRate: round(errorRate * 100, 2), errors: errByCode, throughput: win.length ? round(win.reduce((s, r) => s + r.rps, 0) / win.length) : 0, res, genElu };
+
+    // ¿El trabajo fue constante? Primer tercio de la ventana contra el último.
+    const thirds = [0, 1, 2].map((i) => {
+      const part = win.slice(Math.floor((win.length * i) / 3), Math.floor((win.length * (i + 1)) / 3));
+      const pa = aw.slice(Math.floor((aw.length * i) / 3), Math.floor((aw.length * (i + 1)) / 3));
+      const mean = (v) => (v.length ? round(v.reduce((a, b) => a + b, 0) / v.length) : null);
+      const hp = {};
+      for (const k of ['list', 'join', 'create']) for (const r of part) if (r.ops[k]?.h) merge(hp, r.ops[k].h);
+      const pi = {};
+      for (const r of part) if (r.ops.ping?.h) merge(pi, r.ops.ping.h);
+      return {
+        users: mean(part.map((r) => r.users.sockets)),
+        msgsOut: mean(part.map((r) => r.ws.out)),
+        restPerSec: mean(part.map((r) => r.rps)),
+        js: mean(pa.map((s) => s.server?.threads?.main).filter((x) => x != null)),
+        rssMB: mean(pa.map((s) => s.server?.rssMB).filter((x) => x != null)),
+        mongoCpu: mean(pa.map((s) => s.mongo?.cpu).filter((x) => x != null)),
+        rest: summary(hp),
+        ping: summary(pi),
+      };
+    });
+    const drift = (k) => (thirds[0][k] ? round(((thirds[2][k] - thirds[0][k]) / thirds[0][k]) * 100, 1) : null);
+    const stability = { thirds, workDriftPct: drift('msgsOut'), usersDriftPct: drift('users') };
+    if (Math.abs(stability.usersDriftPct ?? 0) > 10) notes.push(`usuarios variaron ${stability.usersDriftPct} % dentro de la ventana`);
+
+    return { users: n, kind, measuredSec: secs, pass: reasons.length === 0, invalid, reasons, notes, lat, srv, errorRate: round(errorRate * 100, 2), wsErrors, byOp, journeys, entered, gaveUp, errors: errByCode, stability, throughput: win.length ? round(win.reduce((s, r) => s + r.rps, 0) / win.length) : 0, res, genElu };
   }
 
   // ---------- plan ----------
   let outcome = {};
   try {
-    if (plan.mode === 'steps') {
-      for (const [i, item] of plan.users.entries()) {
-        if (signal?.aborted) break;
-        // Un escalón puede traer su propia duración, llegada y calentamiento (p. ej. "Inicio de clase").
-        const { users: n, ...o } = typeof item === 'number' ? { users: item } : item;
-        // restSec: todos salen entre escalones; cada escalón arranca "en frío".
-        if (i > 0 && plan.restSec) {
-          setUsers(0, 5);
-          event('rest', { sec: plan.restSec });
-          progress({ rest: true, sec: plan.restSec, startedAt: Date.now() });
-          await sleep(plan.restSec * 1000, signal);
-        }
-        await step(n, o.sec ?? plan.stepSec ?? 360, 'step', o);
-      }
-      outcome = { passed: results.filter((s) => s.pass).length, steps: results.length };
-    } else {
-      let u = plan.start ?? 20;
-      let good = 0;
-      let bad = null;
-      while (u <= (plan.max ?? 3000) && !signal?.aborted) {
-        const s = await step(u, plan.stepSec ?? 360);
-        if (!s) break;
-        if (s.pass) {
-          good = u;
-          u = Math.ceil(u * (plan.factor ?? 1.5));
-        } else {
-          bad = u;
-          break;
-        }
-      }
-      for (let r = 0; bad && r < (plan.refine ?? 3) && (bad - good) / bad > 0.1 && !signal?.aborted; r++) {
-        const mid = Math.round((good + bad) / 2);
-        if (mid === good || mid === bad) break;
-        // Baja (o sube) directo al punto medio: los que sobran salen, como en la vida real.
-        const s = await step(mid, plan.refineStepSec ?? plan.stepSec ?? 360, 'refine');
-        if (!s) break;
-        if (s.pass) good = mid;
-        else bad = mid;
-      }
-      let confirm = null;
-      if (good > 0 && plan.confirmSec && !signal?.aborted) {
-        setUsers(0, 5);
-        await sleep(20_000, signal);
-        confirm = await step(Math.max(1, Math.floor(good * (plan.confirmPct ?? 0.8))), plan.confirmSec, 'confirm');
-      }
-      outcome = { maxGoodUsers: good, firstBadUsers: bad, confirmUsers: confirm?.users ?? null, confirmPass: confirm?.pass ?? null };
+    for (const item of plan.users) {
+      if (signal?.aborted) break;
+      const { users: n, ...o } = typeof item === 'number' ? { users: item } : item;
+      await step(n, o.sec ?? plan.stepSec ?? 360, 'step', o);
     }
+    outcome = { passed: results.filter((s) => s.pass).length, steps: results.length };
   } finally {
-    setUsers(0, 2);
+    users = 0;
+    scheduler = null;
+    for (const w of workers) w.postMessage({ type: 'stop' });
     await sleep(3000);
     write({ t: 'end', ts: Date.now(), outcome, steps: results.length, stopped: !!signal?.aborted });
     done = true;

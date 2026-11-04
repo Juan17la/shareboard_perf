@@ -1,5 +1,7 @@
 # Mediciones
 
+> **Modelo de carga anterior.** Estas cifras son de la campaña del 2 de noviembre (sesiones de 2 a 5 minutos, 95 % de logins, tableros que crecían sin límite y rampa con logins). Sirven como evidencia de los mecanismos, pero las capacidades no representan uso real. Se reemplazan al repetir la campaña con el [modelo actual](CARGAS.md): `node telemetry/campana.mjs`, luego `node telemetry/tablas.mjs`.
+
 Qué se midió, cómo y con qué resultado, para las cuatro cargas en los cuatro entornos. Todo sale de mediciones propias guardadas en `resultados/`. Las tablas de la sección 4 se generan con un comando a partir de esos archivos:
 
 ```bash

@@ -33,6 +33,17 @@
     const at = (q) => { let seen = 0; for (const k of keys) if ((seen += h[k]) >= Math.ceil(q * n)) return k === 0 ? 0.1 : Math.exp(k * BASE) / 10; };
     return { n, p50: at(0.5), p95: at(0.95), p99: at(0.99) };
   }
+  // Los cinco endpoints que ejercita la carga y qué hace cada uno.
+  const ENDPOINTS = {
+    login: { name: 'Iniciar sesión', route: 'POST /auth/login', does: 'Verifica la contraseña con scrypt (16 MB de memoria, en el threadpool) y entrega la sesión de 30 días.', color: '--s2' },
+    register: { name: 'Crear cuenta', route: 'POST /auth/register', does: 'Calcula scrypt y escribe la cuenta nueva en MongoDB.', color: '--s4' },
+    list: { name: 'Listar tableros', route: 'GET /me/boards', does: 'Consulta en MongoDB los tableros del usuario y los mezcla con los que están en memoria.', color: '--s1' },
+    create: { name: 'Crear tablero', route: 'POST /boards', does: 'Escribe el tablero en MongoDB y espera la confirmación antes de responder.', color: '--s3' },
+    join: { name: 'Unirse a un tablero', route: 'POST /boards/:id/join', does: 'Carga el tablero en memoria si no estaba, valida el PIN (scryptSync, bloquea el hilo de JavaScript) y entrega el token del WebSocket.', color: '--p99' },
+  };
+  const JOURNEYS = { resume: 'Con sesión guardada', guest: 'Invitado con enlace', login: 'Debe iniciar sesión', register: 'Cuenta nueva' };
+  const ROOMS = { solo: 'Solo', small: 'Pareja o trío', team: 'Equipo', workshop: 'Taller', class: 'Clase' };
+  const WINDOW = 30; // segundos: un endpoint poco frecuente no tiene percentiles en un segundo aislado
   const REST = ['list', 'join', 'create']; // el login va aparte: scrypt lo hace lento a propósito
   const restOf = (ops) => ops && (ops.rest ?? pctOf(REST.map((k) => ops[k]?.h)));
   const opsOf = (ops, k) => (k === 'rest' ? restOf(ops) : ops?.[k]);
@@ -53,6 +64,27 @@
     let built = false;
     let lastDrawn = -1;
     const plots = [];
+
+    // Percentiles de un endpoint en los últimos WINDOW segundos (con memoria: el pasado no cambia).
+    const memo = new Map();
+    function windowed(kind, i, src = 'load') {
+      const key = `${src}/${kind}/${i}`;
+      if (memo.has(key)) return memo.get(key);
+      const hs = [];
+      for (let k = Math.max(0, i - WINDOW + 1); k <= i; k++) hs.push(src === 'load' ? R[k]?.load?.ops?.[kind]?.h : R[k]?.agent?.srv?.[kind]?.h);
+      const v = pctOf(hs);
+      if (i < S.maxSec - WINDOW) memo.set(key, v);
+      return v;
+    }
+    const restWindowed = (i, src) => {
+      const hs = [];
+      for (let k = Math.max(0, i - WINDOW + 1); k <= i; k++) for (const n of REST) hs.push(src === 'load' ? R[k]?.load?.ops?.[n]?.h : R[k]?.agent?.srv?.[n]?.h);
+      return pctOf(hs);
+    };
+    // Promedio móvil de 10 s, para ver la tendencia y no el ruido de cada segundo.
+    const smooth = (f, i) => avg(R.slice(Math.max(0, i - 9), i + 1).map(f));
+    const coresBusy = (a) => (a?.cpu && a.cores?.length ? (a.cpu.busy * a.cores.length) / 100 : null);
+    const isNew = () => R.some((r) => r.load?.rooms);
 
     const secOf = (ts) => Math.max(0, Math.round((ts - S.t0) / 1000));
     const thr = () => S.meta?.profile?.thresholds ?? {};
@@ -89,16 +121,44 @@
       { label: 'p99', color: '--p99', get: (r) => opsOf(src(r), key())?.p99 },
     ];
     // hint = qué mide; read = cómo leerla.
+    const endpointSeries = (p) => Object.entries(ENDPOINTS).map(([k, e]) => ({ label: e.name, color: e.color, get: (r, i) => windowed(k, i)?.[p] }));
     const CHARTS = [
+      { title: 'p50 por endpoint', unit: 'ms · ventana de 30 s', hint: 'La mitad de las peticiones tarda menos que esto: la experiencia típica de cada uno de los 5 endpoints.', read: 'Si el p50 sube, ya no es mala suerte de unos pocos: le pasa a todo el mundo. Login y registro son lentos a propósito por scrypt; los otros deben estar en milisegundos.', series: endpointSeries('p50') },
+      { title: 'p95 por endpoint', unit: 'ms · ventana de 30 s', hint: 'El 5 % más lento tarda más que esto.', read: 'Compáralo con el p50 de arriba. Si el p50 está plano y el p95 sube, se está formando cola: la mayoría pasa rápido y algunos esperan.', series: endpointSeries('p95') },
+      { title: 'Tiempo real: p50 y p95', unit: 'ms · ventana de 30 s', hint: 'Lo que tarda un trazo en llegar a los demás y lo que tarda el ping, sin escritura en disco ni base de datos.', read: 'El ping solo hace pasar un mensaje por el hilo de JavaScript: si sube, ese hilo está ocupado. Si sube igual que el trazo, la espera es del hilo y no de la red.', threshold: () => thr().fanoutP95 ?? null, series: [
+        { label: 'Trazo p50', color: '--p50', get: (r, i) => windowed('fanout', i)?.p50 },
+        { label: 'Trazo p95', color: '--p95', get: (r, i) => windowed('fanout', i)?.p95 },
+        { label: 'Ping p50', color: '--s3', get: (r, i) => windowed('ping', i)?.p50 },
+        { label: 'Ping p95', color: '--s2', get: (r, i) => windowed('ping', i)?.p95 },
+      ] },
+      { title: '¿Dentro del servidor o haciendo fila?', unit: 'ms · p50 de REST', hint: 'El usuario mide todo el viaje; el servidor mide desde que empieza a atender. La diferencia es red más fila antes de que Node lea la petición.', read: 'Si la línea del usuario se separa de la del servidor, la petición espera antes de que la atiendan: el hilo de JavaScript no da abasto. Si van juntas y ambas suben, lo lento es el trabajo mismo (por ejemplo MongoDB).', series: [
+        { label: 'Usuario', color: '--s1', get: (r, i) => restWindowed(i, 'load')?.p50 },
+        { label: 'Dentro del servidor', color: '--s3', get: (r, i) => restWindowed(i, 'agent')?.p50 },
+        { label: 'Fila + red', color: '--s2', dash: true, get: (r, i) => { const a = restWindowed(i, 'load')?.p50; const b = restWindowed(i, 'agent')?.p50; return a != null && b != null ? Math.max(0, a - b) : null; } },
+      ] },
+      { title: '¿El trabajo es constante?', unit: 'mensajes/s · promedio de 10 s', hint: 'Lo que envían los clientes al servidor y lo que envían por usuario conectado.', read: 'En la ventana medida debe verse plana, sin rampa. Si sube mientras los usuarios no cambian, la carga no es constante y el resultado no se puede atribuir al número de usuarios.', series: [
+        { label: 'Enviados por los clientes', color: '--s1', get: (r, i) => smooth((x) => x.load?.ws.out, i) },
+      ] },
+      { title: 'Peticiones por endpoint', unit: 'peticiones/s · promedio de 30 s', hint: 'Cómo se reparte el tráfico REST entre los 5 endpoints a lo largo de la prueba.', read: 'Listar y unirse dominan porque los hace casi todo el que llega; login y registro son poco frecuentes porque la sesión dura 30 días. Durante la llegada inicial sube unirse y no hay logins.', only: isNew, series: Object.entries(ENDPOINTS).map(([k, e]) => ({ label: e.name, color: e.color, get: (r, i) => avg(R.slice(Math.max(0, i - 29), i + 1).map((x) => x.load?.att?.[k] ?? 0)) })) },
+      { title: 'CPU por proceso', unit: 'núcleos usados', hint: 'Cuántos núcleos completos usa cada programa. «Resto» es lo que no es servidor ni base de datos: el generador si está en esta máquina, el agente y el sistema.', read: 'Es la forma justa de comparar máquinas: el «% de CPU» de top también cuenta al generador cuando corre en la misma máquina. Mira Servidor + mongod.', series: [
+        { label: 'Servidor', color: '--s1', get: (r) => (r.agent?.server?.cpu != null ? r.agent.server.cpu / 100 : null) },
+        { label: 'mongod', color: '--s2', get: (r) => (r.agent?.mongo?.cpu != null ? r.agent.mongo.cpu / 100 : null) },
+        { label: 'Resto', color: '--muted', dash: true, get: (r) => { const t = coresBusy(r.agent); return t == null ? null : Math.max(0, t - (r.agent.server?.cpu ?? 0) / 100 - (r.agent.mongo?.cpu ?? 0) / 100); } },
+      ] },
+      { title: 'Salas abiertas por tipo', unit: 'usuarios', hint: 'Cuántas personas hay ahora en cada tipo de sala.', read: 'Las clases pesan mucho más que su número de personas: cada mensaje se reenvía a todos los demás de la sala (crece con el cuadrado).', only: isNew, series: Object.entries(ROOMS).map(([k, label], n) => ({ label, color: ['--muted', '--s1', '--s3', '--s4', '--s2'][n], get: (r) => r.load?.rooms?.[k]?.users ?? (r.load?.rooms ? 0 : null) })) },
+      { title: 'Errores y abandonos', unit: 'por segundo · promedio de 10 s', hint: 'Peticiones fallidas y personas que se rindieron tras reintentar.', read: 'Debe ser 0. Abandonos > 0 significa usuarios que nunca lograron entrar: esa es la pérdida real, aunque la latencia de los demás se vea bien.', series: [
+        { label: 'Errores', color: '--critical', get: (r, i) => smooth((x) => x.load?.errors, i) },
+        { label: 'Abandonos', color: '--s4', get: (r, i) => smooth((x) => x.load?.gaveUp, i) },
+      ] },
       { title: 'Usuarios activos', unit: 'usuarios', hint: 'Objetivo del escalón y usuarios conectados al tablero.', read: 'Debe quedarse plana en el objetivo: unos salen y otros entran al mismo ritmo. Si «Conectados» cae por debajo, el servidor no alcanza a atender los logins.', series: [
         { label: 'Objetivo', color: '--s1', dash: true, get: (r) => r.load?.users.target },
         { label: 'Conectados', color: '--s2', get: (r) => r.load?.users.sockets },
       ] },
-      { title: 'Entradas y salidas', unit: 'usuarios/s', hint: 'Logins y registros completados y sesiones terminadas cada segundo.', read: 'En la ventana medida ambas líneas oscilan alrededor del ritmo de la prueba (2/s en carga media, 5/s en alta). Que sigan vivas hasta el final prueba que la carga no se detiene.', only: () => R.some((r) => r.load?.churn), series: [
+      { title: 'Entradas y salidas', unit: 'usuarios/s', hint: 'Personas que llegaron a un tablero y sesiones terminadas cada segundo.', read: 'En la ventana medida ambas oscilan alrededor del mismo ritmo (usuarios ÷ duración de la sesión). Que sigan vivas hasta el final prueba que la carga no se detiene. Si las entradas caen, la gente no está logrando entrar.', only: () => R.some((r) => r.load?.churn), series: [
         { label: 'Entran', color: '--s3', get: (r) => r.load?.churn?.in },
         { label: 'Salen', color: '--s2', get: (r) => r.load?.churn?.out },
       ] },
-      { title: 'Latencia del usuario', unit: 'ms', select: ['op', LAT_OPS], hint: 'Lo que espera el usuario, incluida la red. Línea roja: límite aceptable.', read: 'Mira p95 y p99, no p50: si p50 está bien pero p99 se dispara, 1 de cada 100 usuarios tiene una mala experiencia. Una brecha creciente entre p50 y p99 indica cola.',
+      { title: 'Latencia del usuario', unit: 'ms', select: ['op', LAT_OPS], hint: 'Lo que espera el usuario, incluida la red. Línea roja: límite aceptable.', read: 'p50 es la experiencia típica; p95 y p99, la de los menos afortunados. Si p50 está bien pero p99 se dispara, 1 de cada 100 tiene una mala experiencia. Si p50 también sube, le pasa a todos. Una brecha creciente entre ambos indica cola.',
         threshold: () => (thr()[LAT_THR[view.op]] != null ? thr()[LAT_THR[view.op]] + base() : null),
         series: pct((r) => r.load?.ops, () => view.op) },
       { title: 'Latencia dentro del servidor', unit: 'ms', select: ['route', SRV_ROUTES], hint: 'Medida por el propio servidor, sin la red.', read: 'Sirve para comparar máquinas de forma justa (la nube suma internet). Si esta es baja y la del usuario alta, la espera está en la cola antes de que Node atienda la petición.',
@@ -145,11 +205,14 @@
       { title: 'Errores', unit: 'por segundo', hint: 'Peticiones o mensajes que fallaron.', read: 'Debe ser 0. Errores con la CPU saturada = el servidor ya no da abasto.', series: [
         { label: 'Errores', color: '--s2', get: (r) => r.load?.errors },
       ] },
-      { title: 'Qué están haciendo', unit: 'usuarios', hint: 'Cuántos usuarios hay en cada estado del flujo realista.', read: 'La mayoría mira; dibujar y mover generan casi todo el tráfico en tiempo real.', series: [
+      { title: 'Qué están haciendo', unit: 'usuarios', hint: 'Cuántos usuarios hay en cada actividad.', read: 'La mayoría mira o está en otra pestaña; dibujar, hacer figuras y mover generan casi todo el tráfico en tiempo real.', series: [
         { label: 'Mirando', color: '--s1', get: (r) => r.load?.states?.watch },
         { label: 'Cursor', color: '--s2', get: (r) => r.load?.states?.cursor },
         { label: 'Dibujando', color: '--s3', get: (r) => r.load?.states?.draw },
         { label: 'Moviendo', color: '--s4', get: (r) => r.load?.states?.move },
+        { label: 'Figura', color: '--p50', get: (r) => r.load?.states?.shape },
+        { label: 'Escribiendo', color: '--p99', get: (r) => r.load?.states?.text },
+        { label: 'Otra pestaña', color: '--muted', dash: true, get: (r) => r.load?.states?.away },
       ] },
       { title: 'Tiempo real recibido', unit: 'mensajes/s', hint: 'Lo que el servidor reenvía a los clientes.', read: 'Crece con el cuadrado del tamaño de cada tablero (cada uno ve a todos).', series: [
         { label: 'Cursores', color: '--s1', get: (r) => r.load?.ws.cursorsIn },
@@ -254,12 +317,16 @@
         const data = [X.slice(0, n)];
         for (const s of def.series) {
           const col = new Array(n);
-          for (let i = 0; i < n; i++) { const v = s.get(R[i]); col[i] = v == null || Number.isNaN(v) ? null : v; }
+          for (let i = 0; i < n; i++) { const v = s.get(R[i], i); col[i] = v == null || Number.isNaN(v) ? null : v; }
           data.push(col);
         }
         def.plot.setData(data, true);
       }
       drawHeat(end);
+      drawCurve(end);
+      waits(end);
+      endpoints(end);
+      thirds();
       drawBands();
       kpis(end);
       steps(end);
@@ -308,6 +375,132 @@
       const v = R[sec]?.agent?.cores?.[core];
       q('.heat-hint').textContent = v == null ? 'Cada fila es un núcleo. Más oscuro = más ocupado.' : `Núcleo ${core} · ${mmss(sec)} · ${fmt(v, 0)} % ocupado`;
     });
+
+    // Curva de saturación: cada punto son 10 s de prueba. Muestra el codo donde la latencia se dispara.
+    function drawCurve(end) {
+      const cv = q('.curve');
+      const w = cv.clientWidth;
+      if (!w) return;
+      const h = 240;
+      const dpr = devicePixelRatio;
+      cv.width = w * dpr;
+      cv.height = h * dpr;
+      const ctx = cv.getContext('2d');
+      ctx.scale(dpr, dpr);
+      const yKey = q('.curve-y').value;
+      const pts = [];
+      for (let i = 9; i <= end; i += 10) {
+        const js = avg(R.slice(i - 9, i + 1).map((r) => r.agent?.server?.threads?.main));
+        const y = yKey === 'rest' ? restWindowed(i, 'load')?.p95 : windowed(yKey, i)?.p95;
+        if (js != null && y != null) pts.push([js, y, i]);
+      }
+      const L = 56;
+      const B = 30;
+      const pw = w - L - 12;
+      const ph = h - B - 8;
+      const maxX = Math.max(100, ...pts.map((p) => p[0]));
+      const maxY = Math.max(10, ...pts.map((p) => p[1])) * 1.1;
+      const xOf = (v) => L + (v / maxX) * pw;
+      const yOf = (v) => 8 + ph - (v / maxY) * ph;
+      ctx.font = '11px system-ui';
+      ctx.fillStyle = css('--muted');
+      ctx.strokeStyle = css('--grid');
+      ctx.textBaseline = 'middle';
+      for (let k = 0; k <= 4; k++) {
+        const v = (maxY * k) / 4;
+        ctx.beginPath(); ctx.moveTo(L, yOf(v)); ctx.lineTo(L + pw, yOf(v)); ctx.stroke();
+        ctx.fillText(fmt(v, v < 10 ? 1 : 0), 8, yOf(v));
+      }
+      for (let v = 0; v <= maxX; v += 25) {
+        ctx.beginPath(); ctx.moveTo(xOf(v), 8); ctx.lineTo(xOf(v), 8 + ph); ctx.stroke();
+        ctx.fillText(`${v} %`, xOf(v) - 10, h - 16);
+      }
+      ctx.fillText('Hilo de JavaScript ocupado', L + pw / 2 - 70, h - 4);
+      ctx.fillStyle = css('--s1');
+      ctx.globalAlpha = 0.65;
+      for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(xOf(x), yOf(y), 3.5, 0, 7); ctx.fill(); }
+      ctx.globalAlpha = 1;
+      q('.curve-empty').hidden = pts.length > 0;
+    }
+    q('.curve-y').addEventListener('change', () => draw(true));
+
+    // Dónde espera la aplicación: se calcula de la ventana medida (o de los últimos 60 s en vivo).
+    function waits(end) {
+      const st = S.steps.filter((x) => secOf(x.start) <= end).at(-1);
+      const from = st ? secOf(st.end - st.measuredSec * 1000) : Math.max(0, end - 60);
+      const to = st ? Math.min(end, secOf(st.end)) : end;
+      const win = R.slice(from, to + 1).map((r) => r.agent).filter(Boolean);
+      if (!win.length) return;
+      const mean = (f) => avg(win.map(f));
+      const peak = (f) => { const v = win.map(f).filter((x) => x != null && Number.isFinite(x)); return v.length ? Math.max(...v) : null; };
+      const js = mean((a) => a.server?.threads?.main);
+      const pool = mean((a) => a.server?.threads?.['libuv-worker']);
+      const throttled = mean((a) => a.cgroup?.throttledMs);
+      const cgPeriods = mean((a) => a.cgroup?.throttledPeriods);
+      const util = mean((a) => diskUtil(a));
+      const wa = mean((a) => a.cpu?.iowait);
+      const iops = mean((a) => sumDisk(a, 'readIops') + sumDisk(a, 'writeIops'));
+      const mbs = mean((a) => sumDisk(a, 'readMBs') + sumDisk(a, 'writeMBs'));
+      const tx = mean((a) => busiest(a).txMBs);
+      const txPeak = peak((a) => busiest(a).txMBs);
+      const rx = mean((a) => busiest(a).rxMBs);
+      const res = peak((a) => a.server?.rssMB);
+      const limit = win.find((a) => a.cgroup?.memLimitMB)?.cgroup.memLimitMB ?? null;
+      const idleM = mean(idle);
+      const steal = mean((a) => a.cpu?.steal);
+      const level = (v, warn, bad) => (v == null ? 'none' : v >= bad ? 'bad' : v >= warn ? 'warn' : 'ok');
+      const rows = [
+        ['Hilo de JavaScript', 'CPU, parte secuencial', js, level(js, 60, 85), `${fmt(js, 0)} % de un núcleo`, 'Node ejecuta todo su JavaScript en un solo hilo. Cerca de 100 %, nada más puede atenderse aunque haya otros núcleos libres.'],
+        ['Threadpool de libuv', 'CPU, scrypt', pool, level(pool, 200, 340), `${fmt(pool, 0)} % de 400 %`, 'Cuatro hilos calculan scrypt. Llenos, los logins hacen fila.'],
+        ['CPU de la máquina', 'CPU total', idleM == null ? null : 100 - idleM, level(idleM == null ? null : 100 - idleM, 70, 90), `${fmt(idleM, 0)} % libre${steal > 1 ? ` · st ${fmt(steal, 1)} %` : ''}`, 'Si no queda CPU libre, todos los procesos se reparten lo poco que hay.'],
+      ];
+      if (throttled != null) rows.push(['Cuota del contenedor', 'Límite del cgroup', throttled, level(throttled, 50, 300), `frenado ${fmt(throttled, 0)} ms/s · ${fmt(cgPeriods, 1)} periodos/s`, 'Gastada la cuota, el kernel congela el contenedor hasta el siguiente periodo, aunque la máquina esté libre.']);
+      rows.push(
+        ['Disco', 'IOPS y caudal', util, level(util, 60, 90), `%util ${fmt(util, 0)} · wa ${fmt(wa, 1)} % · ${fmt(iops, 0)} IOPS · ${fmt(mbs, 1)} MB/s`, 'Con %util y wa bajos, nadie espera al disco.'],
+        ['Red', 'Entrada y salida', txPeak, 'none', `entra ${fmt(rx, 1)} · sale ${fmt(tx, 1)} MB/s · pico ${fmt(txPeak, 1)}`, 'Compárala con el ancho de banda de la máquina (t3.small: 16 MB/s de base). En el PC y Docker el tráfico es local.'],
+        ['Memoria', 'RES del servidor', res, level(limit ? (res / limit) * 100 : null, 70, 90), `pico ${fmt(res, 0)} MB${limit ? ` de ${fmt(limit, 0)} MB` : ''}`, 'Define el tamaño mínimo de la máquina. Solo es cuello si se acerca al límite.'],
+      );
+      const order = { bad: 3, warn: 2, ok: 1, none: 0 };
+      const worst = rows.reduce((b, r) => (order[r[3]] > order[b[3]] ? r : b), rows[0]);
+      const label = { bad: 'saturado', warn: 'exigido', ok: 'holgado', none: 'comparar con la ficha' };
+      q('.waits-verdict').innerHTML = order[worst[3]] >= 2 ? `La espera está en <b>${worst[0]}</b> (${worst[1]}): ${worst[4]}.` : 'Ningún recurso está exigido con esta carga: la aplicación no está esperando por CPU, disco ni memoria.';
+      q('.waits tbody').innerHTML = rows.map((r) => `<tr><td><b>${r[0]}</b><br><span class="muted">${r[1]}</span></td><td><span class="lvl ${r[3]}">${label[r[3]]}</span></td><td class="num">${r[4]}</td><td class="why">${r[5]}</td></tr>`).join('');
+    }
+
+    function endpoints(end) {
+      const st = S.steps.filter((x) => secOf(x.start) <= end).at(-1);
+      if (!st?.lat) { q('.ep-card').hidden = true; return; }
+      q('.ep-card').hidden = false;
+      const total = Object.keys(ENDPOINTS).reduce((t, k) => t + (st.byOp?.[k]?.attempts ?? st.lat[k]?.n ?? 0), 0) || 1;
+      const secs = st.measuredSec || 1;
+      const rows = Object.entries(ENDPOINTS).map(([k, e]) => {
+        const l = st.lat[k];
+        const op = st.byOp?.[k];
+        const tries = op?.attempts ?? l?.n ?? 0;
+        const share = (tries / total) * 100;
+        return `<tr><td><b>${e.name}</b><br><code>${e.route}</code></td><td class="why">${e.does}</td>
+          <td class="num">${fmt(tries, 0)}</td><td class="num">${fmt(tries / secs, 2)}</td>
+          <td><div class="share"><i style="width:${share}%"></i></div><span class="muted">${fmt(share, 0)} %</span></td>
+          <td class="num"><b>${fmt(l?.p50)}</b></td><td class="num">${fmt(l?.p95)}</td><td class="num">${fmt(l?.p99)}</td>
+          <td class="num">${op ? `${fmt(op.errorPct, 1)} %` : '–'}</td></tr>`;
+      });
+      q('.ep-table tbody').innerHTML = rows.join('');
+      const j = st.journeys ?? {};
+      const jt = Object.values(j).reduce((a, b) => a + b, 0);
+      q('.ep-journeys').innerHTML = jt ? `Cómo llegaron ${fmt(jt, 0)} personas: ${Object.entries(JOURNEYS).map(([k, n]) => `${n} <b>${fmt(((j[k] ?? 0) / jt) * 100, 0)} %</b>`).join(' · ')}. Se rindieron: <b>${fmt(st.gaveUp ?? 0, 0)}</b>.${(st.notes ?? []).length ? ` <span class="muted">${esc(st.notes.join(' · '))}</span>` : ''}` : '';
+    }
+
+    function thirds() {
+      const st = S.steps.at(-1)?.stability;
+      const card = q('.stab-card');
+      card.hidden = !st;
+      if (!st) return;
+      const names = ['Inicio', 'Mitad', 'Final'];
+      const row = (label, f, d = 1) => `<tr><td>${label}</td>${st.thirds.map((t) => `<td class="num">${fmt(f(t), d)}</td>`).join('')}</tr>`;
+      q('.stab tbody').innerHTML = row('Usuarios conectados', (t) => t.users, 0) + row('Mensajes enviados/s', (t) => t.msgsOut, 0) + row('Peticiones REST/s', (t) => t.restPerSec, 2) + row('Hilo de JavaScript %', (t) => t.js, 0) + row('RES servidor MB', (t) => t.rssMB, 0) + row('mongod % CPU', (t) => t.mongoCpu, 0) + row('REST p50 ms', (t) => t.rest?.p50) + row('REST p95 ms', (t) => t.rest?.p95) + row('Ping p50 ms', (t) => t.ping?.p50) + row('Ping p99 ms', (t) => t.ping?.p99);
+      q('.stab thead').innerHTML = `<tr><th></th>${names.map((n) => `<th>${n}</th>`).join('')}</tr>`;
+      q('.stab-verdict').innerHTML = `El trabajo cambió <b>${fmt(st.workDriftPct, 1)} %</b> y los usuarios <b>${fmt(st.usersDriftPct, 1)} %</b> entre el inicio y el final. ${Math.abs(st.workDriftPct ?? 0) <= 15 ? 'Se puede considerar constante: lo que cambie en latencia se debe al servidor.' : 'No es constante: las salas grandes abiertas en ese momento cambiaron la carga, interpreta la latencia con cuidado.'}`;
+    }
 
     function drawBands() {
       const cv = q('.bands');
@@ -418,19 +611,19 @@
       raw: () => save(raw.join('\n') + '\n', '.ndjson', 'application/x-ndjson'),
       seconds: () => {
         rebuild();
-        const head = ['segundo', 'usuarios_objetivo', 'usuarios_conectados', 'entran_s', 'salen_s', 'cpu_us', 'cpu_sy', 'cpu_wa', 'cpu_id', 'cpu_st', 'cpu_promedio', 'cpu_nucleo_pico', 'hilo_js', 'res_servidor_mb', 'res_mongod_mb', 'mem_contenedor_mb', 'disco_iops_lectura', 'disco_iops_escritura', 'disco_mbs_lectura', 'disco_mbs_escritura', 'disco_util', 'red_entrada_mbs', 'red_salida_mbs', 'rest_p50_ms', 'rest_p95_ms', 'rest_p99_ms', 'difusion_p95_ms', 'errores_s'];
+        const head = ['segundo', ...Object.keys(ENDPOINTS).flatMap((k) => [`${k}_p50_ms`, `${k}_p95_ms`]), 'trazo_p50_ms', 'trazo_p95_ms', 'ping_p50_ms', 'ping_p95_ms', 'usuarios_objetivo', 'usuarios_conectados', 'entran_s', 'salen_s', 'cpu_us', 'cpu_sy', 'cpu_wa', 'cpu_id', 'cpu_st', 'cpu_promedio', 'cpu_nucleo_pico', 'hilo_js', 'res_servidor_mb', 'res_mongod_mb', 'mem_contenedor_mb', 'disco_iops_lectura', 'disco_iops_escritura', 'disco_mbs_lectura', 'disco_mbs_escritura', 'disco_util', 'red_entrada_mbs', 'red_salida_mbs', 'rest_p50_ms', 'rest_p95_ms', 'rest_p99_ms', 'difusion_p95_ms', 'errores_s'];
         const rows = R.map((r, i) => {
           const a = r.agent;
           const l = r.load;
           const rest = restOf(l?.ops);
-          return [i, l?.users.target, l?.users.sockets, l?.churn?.in, l?.churn?.out, a?.cpu.user, a?.cpu.system, a?.cpu.iowait, idle(a), a?.cpu.steal, a?.cpu.busy, hottest(a), a?.server?.threads?.main, a?.server?.rssMB, a?.mongo?.rssMB, a?.cgroup?.memMB,
+          return [i, ...Object.keys(ENDPOINTS).flatMap((k) => [windowed(k, i)?.p50, windowed(k, i)?.p95]), windowed('fanout', i)?.p50, windowed('fanout', i)?.p95, windowed('ping', i)?.p50, windowed('ping', i)?.p95, l?.users.target, l?.users.sockets, l?.churn?.in, l?.churn?.out, a?.cpu.user, a?.cpu.system, a?.cpu.iowait, idle(a), a?.cpu.steal, a?.cpu.busy, hottest(a), a?.server?.threads?.main, a?.server?.rssMB, a?.mongo?.rssMB, a?.cgroup?.memMB,
             a && sumDisk(a, 'readIops'), a && sumDisk(a, 'writeIops'), a && sumDisk(a, 'readMBs'), a && sumDisk(a, 'writeMBs'), diskUtil(a), a && busiest(a).rxMBs, a && busiest(a).txMBs, rest?.p50, rest?.p95, rest?.p99, l?.ops.fanout?.p95, l?.errors];
         });
         save(csv(head, rows), '_por-segundo.csv', 'text/csv');
       },
       summary: () => {
         const stats = [['cpu_total', 'cpuTotal'], ['cpu_nucleo_pico', 'cpuHottestCore'], ['cpu_us', 'cpuUser'], ['cpu_sy', 'cpuSystem'], ['cpu_wa', 'iowait'], ['cpu_id', 'cpuIdle'], ['cpu_st', 'steal'], ['hilo_js', 'serverMainThread'], ['res_servidor_mb', 'serverRssMB'], ['res_mongod_mb', 'mongoRssMB'], ['disco_iops', 'diskIops'], ['disco_mbs', 'diskMBs'], ['disco_util', 'diskUtil'], ['red_entrada_mbs', 'netRxMBs'], ['red_salida_mbs', 'netTxMBs'], ['contenedor_frenado_ms_s', 'throttledMs']];
-        const lats = [['rest', 'REST'], ['login', 'login'], ['register', 'registro'], ['create', 'crear'], ['list', 'listar'], ['join', 'unirse'], ['fanout', 'difusion'], ['preview', 'preview'], ['ping', 'ping']];
+        const lats = [['rest', 'REST'], ['auth', 'autenticacion'], ['login', 'login'], ['register', 'registro'], ['create', 'crear'], ['list', 'listar'], ['join', 'unirse'], ['fanout', 'difusion'], ['preview', 'preview'], ['ping', 'ping']];
         const head = ['entorno', 'prueba', 'escalon', 'usuarios', 'llegadas_s', 'sesion_media_s', 'segundos_medidos', 'resultado', 'motivo', 'errores_pct',
           ...stats.flatMap(([n]) => [`${n}_prom`, `${n}_pico`]), ...lats.flatMap(([, n]) => [`${n}_p50_ms`, `${n}_p95_ms`, `${n}_p99_ms`]), 'servidor_rest_p50_ms', 'servidor_rest_p95_ms', 'servidor_rest_p99_ms'];
         const rows = S.steps.map((s, i) => {
@@ -621,7 +814,7 @@
     if (running) {
       const p = running.progress;
       const el = p?.startedAt ? mmss((Date.now() - p.startedAt) / 1000) : '';
-      const what = !p ? 'Reiniciando el servidor…' : p.rest ? `Pausa: todos salen (${p.sec} s)` : `Escalón ${p.step} · ${p.users} usuarios activos${p.arrivalPerSec ? ` · entran y salen ${fmt(p.arrivalPerSec)}/s` : ''} · ${p.layout?.boards ?? '?'} tableros · ${el} de ${mmss(p.sec)}`;
+      const what = !p ? 'Restaurando la base y reiniciando el servidor…' : `${p.users} usuarios activos · ${el} de ${mmss(p.sec)}`;
       r.innerHTML = `<div><b>${running.name}${running.quick ? ' (rápida)' : ''}</b><span>${what}</span></div><button class="btn danger" id="stop">Detener</button>`;
       $('stop').onclick = () => post('api/stop');
     }

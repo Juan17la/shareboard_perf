@@ -112,7 +112,7 @@ node telemetry/lab.mjs
 
 Abre **http://localhost:7070**.
 
-1. **Entorno:** elige **PC (nativo)** y pulsa **Preparar**. El laboratorio compila el servidor si cambió, levanta MongoDB en Docker, arranca el servidor y el agente, y crea los datos de prueba (6.000 cuentas y 6.000 tableros, unos 7 minutos la primera vez). Los cuatro puntos se ponen en verde.
+1. **Entorno:** elige **PC (nativo)** y pulsa **Preparar**. El laboratorio compila el servidor si cambió, levanta MongoDB en Docker, arranca el servidor y el agente, y crea los datos de prueba (1.500 cuentas y 2.000 tableros con contenido, 1 o 2 minutos la primera vez). Los cuatro puntos se ponen en verde.
 2. **Reiniciar datos** antes de la primera prueba, para que la base sea igual en todos los entornos.
 3. **Pruebas:** pulsa **Correr** en Carga baja, media, alta y Server killer, en ese orden. Cada una dura 12,5 minutos. Antes de cada prueba el servidor se reinicia, así siempre arranca con la memoria limpia.
 4. **Resultados:** cada corrida queda en la lista. Clic en una para reproducirla.

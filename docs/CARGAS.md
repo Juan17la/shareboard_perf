@@ -1,181 +1,159 @@
-# Niveles de carga: cómo se diseñaron y por qué
+# Plan de carga: cómo se diseñó y por qué
 
-Este documento explica qué hace cada usuario virtual, cómo se eligieron los cuatro niveles de carga y los números que salen de cada uno: usuarios activos, llegadas por segundo y por minuto, sesiones totales y operaciones por segundo.
+Define qué hace cada usuario virtual, cómo se reparten los endpoints, qué números usa cada nivel y cómo se garantiza que el trabajo sea constante.
 
-Archivos que lo definen: `telemetry/profiles/flujo.json` (comportamiento de un usuario) y `telemetry/profiles/{2-baja,3-media,4-alta,5-server-killer}.json` (niveles).
+Archivos que lo definen: `telemetry/profiles/flujo.json` (comportamiento), `telemetry/profiles/{2-baja,3-media,4-alta,5-server-killer}.json` (niveles), `telemetry/lib/rooms.mjs` (planificador) y `telemetry/vu-worker.mjs` (el usuario).
 
----
+> **Estado de los datos.** Este modelo reemplaza al anterior (sesiones de 2 a 5 minutos con 95 % de logins). Las tablas de [MEDICIONES.md](MEDICIONES.md), [COMPARACIONES.md](COMPARACIONES.md) y [CONCLUSIONES.md](CONCLUSIONES.md) siguen siendo del modelo anterior hasta repetir la campaña.
 
-## 1. Principio: carga continua, no una ráfaga
+## 1. Qué pide el proyecto y cómo se cumple
 
-Una primera versión del generador traía a los usuarios al principio y luego los dejaba quietos. Las sesiones duraban 40 minutos, así que en una prueba de 5 minutos casi nadie salía y no había más logins. La entrada al sistema (login, registro, listar tableros) solo se ejercitaba en el primer minuto.
+| Requisito del proyecto | Cómo se cumple |
+|---|---|
+| Carga sostenida, al menos varios minutos | 600 s de medición en cada prueba, con llegadas y salidas continuas |
+| Uso de CPU: promedio y pico, por núcleo | Agente con `/proc/stat`; también por hilo y por proceso |
+| Memoria residente | `VmRSS` del servidor y de MongoDB |
+| Operaciones de disco: IOPS y MB/s | `/proc/diskstats`, más `%util` |
+| Tráfico de red: entrada y salida por segundo | `/proc/net/dev` |
+| Latencia p50, p95 y p99, no el promedio | Histogramas por endpoint, incluyendo a quien no fue atendido |
+| ¿Dónde espera: CPU, disco o red? | Panel «¿Dónde está esperando la aplicación?» |
+| Tres opciones con las mismas mediciones | Máquina física, contenedor con límites e instancia EC2, con perfiles idénticos |
+| Mediciones propias y reproducibles | Guiones en `telemetry/`, datos crudos en `resultados/` |
 
-La versión actual mantiene un **número fijo de usuarios activos** y, durante toda la prueba, **unos terminan su sesión y salen mientras otros entran**. La relación entre las tres magnitudes es la ley de Little:
+## 2. Los cinco endpoints
 
-```
-usuarios activos (L) = llegadas por segundo (λ) × duración media de la sesión (W)
-```
+| Endpoint | Qué hace | Recurso que exige | Quién lo usa |
+|---|---|---|---|
+| `POST /auth/login` | Verifica la contraseña con scrypt y entrega una sesión de 30 días | Threadpool de libuv, memoria y caché | Solo quien no tiene sesión guardada |
+| `POST /auth/register` | Calcula scrypt y crea la cuenta | Threadpool, escritura en MongoDB | Personas nuevas |
+| `GET /me/boards` | Lista los tableros del usuario | Lectura en MongoDB, hilo de JavaScript | Quien tiene cuenta, al entrar y de vez en cuando |
+| `POST /boards` | Crea un tablero y espera a que quede guardado | Escritura en MongoDB | Parte de quienes abren una sala propia |
+| `POST /boards/:id/join` | Carga el tablero si no está en memoria, valida el PIN y entrega el token del WebSocket | MongoDB (carga en frío), hilo de JavaScript (PIN con `scryptSync`) | Todos |
 
-Ejemplo, carga media: 2 usuarios/s × 120 s = **240 usuarios activos**.
+Además, cada persona mantiene un **WebSocket** (`/ws`) abierto para el tiempo real. No cuenta como endpoint REST, pero es donde está la mayor parte del trabajo. Las demás rutas de la app no se ejercitan, por decisión de alcance.
 
-Cada usuario virtual ocupa un "puesto". Cuando su sesión termina, sale (cierra su WebSocket) y otra persona ocupa ese puesto de inmediato con un login nuevo. La duración de cada sesión es aleatoria con distribución exponencial de media W, así las salidas (y por lo tanto las llegadas) son un proceso de Poisson: no llegan en bloque sino de forma irregular, como en la realidad.
+### Reparto medido
 
-Todas las pruebas **duran lo mismo** (12,5 minutos) y solo cambia el nivel de carga:
+Corrida de carga media en el PC: 600 s, 148 llegadas. Es una sola corrida, así que los endpoints poco frecuentes varían entre pruebas. Cada corrida reporta el suyo en el panel «Los 5 endpoints».
 
-| Fase | Duración | Qué pasa |
-|---|---|---|
-| Llegada | 120 s | Los usuarios entran hasta completar el nivel |
-| Estabilización | 30 s | Cachés, recolector de basura y conexiones llegan a régimen. No se mide |
-| **Medición** | **600 s** | Carga sostenida: entradas y salidas continuas. Es lo que se reporta |
-
----
-
-## 2. Qué hace un usuario (el flujo)
-
-Cada llegada imita al cliente web real de Shareboard (frecuencias tomadas de `web/src/lib/config.ts`):
-
-```
-llega ─► login (95 %) o registro (5 %)
-      ─► lista sus tableros (GET /me/boards)
-      ─► crea un tablero (5 % de las llegadas)
-      ─► se une a su tablero (POST /boards/:id/join) y abre el WebSocket
-      ─► trabaja: alterna estados según su rol, vuelve a listar cada ~5 min
-      ─► sale al terminar la sesión (cierra el WebSocket)
-```
-
-| Operación | Ruta | Qué cuesta en el servidor |
-|---|---|---|
-| Login | `POST /auth/login` | scrypt (N=2¹⁴, r=8, p=5: 16 MB y ~100-600 ms de CPU según la máquina) en el threadpool de libuv + lectura en Mongo |
-| Registro | `POST /auth/register` | scrypt + escritura de la cuenta en Mongo |
-| Listar tableros | `GET /me/boards` | Consulta a Mongo |
-| Crear tablero | `POST /boards` | Escritura en Mongo, **esperada** por la petición |
-| Unirse | `POST /boards/:id/join` | Carga el tablero en memoria si no estaba |
-| Tiempo real | WebSocket `/ws` | Cada mensaje se reenvía a todos los demás del tablero |
-
-Dentro del tablero el usuario alterna cuatro estados. Su peso depende del rol:
-
-| Estado | Qué envía | Duración media |
-|---|---|---|
-| Mirando | Solo un ping cada 20 s | 12 s |
-| Cursor | Posición del cursor cada 45 ms (~22/s) | 2,5 s |
-| Dibujando | Cursor + vista previa del trazo cada 33 ms (~30/s) + el trazo final al soltar | 2 s |
-| Moviendo | Selección + cursor + vista previa cada 33 ms + el cambio al soltar | 1,5 s |
-
-| Rol | Dónde | Mirando | Cursor | Dibujando | Moviendo |
+| Endpoint | Peticiones/s | Por llegada | % del tráfico REST | p50 | p95 |
 |---|---|---|---|---|---|
-| Colaborador | Equipos y personas solas | 55 % | 25 % | 12 % | 8 % |
-| Presentador | 1 por clase | 20 % | 35 % | 35 % | 10 % |
-| Espectador | El resto de la clase | 85 % | 12 % | 3 % | 0 % |
+| `GET /me/boards` | 0,361 | 1,5 | 54 % | 3,4 ms | 4,3 ms |
+| `POST /boards/:id/join` | 0,243 | 1,0 | 36 % | 1,8 ms | 29,5 ms |
+| `POST /auth/login` | 0,043 | 0,18 | 6 % | 136 ms | 172 ms |
+| `POST /boards` | 0,022 | 0,09 | 3 % | 3,6 ms | 4,5 ms |
+| `POST /auth/register` | 0 en esta corrida | ~0,015 esperado | ~0,5 % | – | – |
 
-Los usuarios se reparten en bloques de 250 que se repiten: **4 clases de 30, 22 equipos de 5 y 20 personas solas** (46 tableros por bloque). Las reuniones en línea promedian 7 a 10 personas (Zoom 2021-2022); los equipos de 5 son el caso típico y la clase de 30 el grupo grande.
+El tráfico REST es pequeño: casi todo el trabajo está en el tiempo real (~780 mensajes/s de los clientes, 2,6 por usuario). El p95 de 29,5 ms de `join` es compatible con `scryptSync`, que bloquea el hilo cuando alguien entra a un tablero con PIN.
 
-Los porcentajes por estado son un supuesto de diseño: no hay datos públicos de Miro o Excalidraw sobre cuánto dibuja cada persona. Están en un solo archivo (`flujo.json`) y se pueden variar.
+## 3. El flujo de un usuario
 
----
+No es un bucle: cada persona llega a una **sala**, sigue uno de cuatro caminos y va cambiando de actividad según lo que acaba de hacer.
 
-## 3. Los cuatro niveles
+### Salas
 
-La entrada de usuarios es de **1 o 2 por segundo**. Lo que diferencia las cargas es el ritmo de entrada y cuánto tiempo se queda cada persona:
+Una sala es un grupo que comparte tablero. Cuando una cierra, se abre otra para mantener el objetivo de usuarios.
 
-| Nivel | Llegadas (λ) | Sesión media (W) | **Usuarios activos (L)** | Tableros abiertos | Qué representa |
+| Tipo | % de salas | Personas | Duración media | Ventana de llegada | Roles |
 |---|---|---|---|---|---|
-| **Baja** | 1/s | 2 min | **120** | 22 (2 clases, 10 equipos, 10 solos) | Una facultad en su hora pico: visitas cortas, varias clases a la vez |
-| **Media** | 2/s | 2 min | **240** | 44 (4 clases, 21 equipos, 19 solos) | Varias facultades o empresas pequeñas a la vez. Doble ritmo de entrada que la baja |
-| **Alta** | 2/s | 5 min | **600** | 107 (10 clases, 51 equipos, 46 solos) | Una universidad grande: el mismo ritmo de entrada que la media, pero clases y reuniones más largas. Más tiempo real simultáneo |
-| **Server killer** | 20/s | 5 min | **6.000** | 1.104 (96 clases, 528 equipos, 480 solos) | La alta multiplicada por 10. No está hecha para pasar: muestra qué se rompe primero |
+| Solo | 45 | 1 | 15 min | – | Trabajo individual |
+| Pareja o trío | 30 | 2-3 | 20 min | 1 min | Participantes |
+| Equipo | 18 | 4-8 | 30 min | 2 min | 1 presentador + participantes |
+| Taller | 5 | 10-15 | 45 min | 3 min | 1 presentador + participantes |
+| Clase | 2 | 25-35 | 50 min | 4 min | 1 presentador + espectadores |
 
-Por qué este diseño separa causas:
+El 15 % se va antes de que acabe la sala. La sesión media resulta de unos 25 minutos.
 
-- **Baja → media:** se duplica el ritmo de login y registro (trabajo de scrypt, CPU) y se duplican los usuarios.
-- **Media → alta:** el ritmo de login es **el mismo** (2/s), pero hay 2,5 veces más usuarios conectados. Si la alta falla y la media no, el problema es el tiempo real (reenvío de mensajes), no el login.
-- **Server killer:** 10 veces todo a la vez, para ver qué recurso cede primero.
+### Caminos de llegada
 
-### 3.1 Números por nivel
+| Camino | Grupo | Solo | Qué hace |
+|---|---|---|---|
+| Con sesión guardada | 52 % | 80 % | Lista → elige (2-8 s) → se une. La sesión dura 30 días, por eso es lo normal |
+| Invitado con enlace | 35 % | – | Escribe su nombre (3-10 s) → se une, con PIN si el tablero lo pide |
+| Debe iniciar sesión | 12 % | 17 % | Escribe (5-15 s) → login → lista → elige → se une |
+| Cuenta nueva | 1 % | 3 % | Llena el formulario (20-40 s) → registro → se une |
 
-Calculados con la ley de Little y con las proporciones del flujo (95 % login, 5 % registro, 5 % crean tablero):
+El 30 % de las salas de una persona crea un tablero nuevo antes de entrar. El 20 % de los tableros tiene PIN.
+
+Si una petición falla, la persona reintenta dos veces y se rinde. Ese abandono se cuenta como resultado.
+
+### Dentro del tablero
+
+La siguiente actividad depende de la actual y del rol (cadena de Markov en `flujo.json`): quien acaba de dibujar suele seguir dibujando o mover el cursor; quien mira, a veces se va a otra pestaña.
+
+| Actividad | Qué envía | Duración media |
+|---|---|---|
+| Mirando | Solo ping cada 20 s | 25 s |
+| Cursor | Posición cada 45 ms mientras la mano se mueve, con pausas | 4 s |
+| Dibujando | Cursor + vista previa cada 33 ms + trazo final | 3 s |
+| Figura | Cursor + vista previa + figura final | 4 s |
+| Escribiendo | Nada hasta confirmar; luego el texto (1 % son imágenes de ~22 KB) | 8 s |
+| Moviendo | Selección + cursor + vista previa + posición final | 2,5 s |
+| Borrando | Un borrado | 1 s |
+| En otra pestaña | Solo ping | 60 s |
+
+Eventos de fondo: la red se cae cada ~20 min y el socket reconecta con el mismo token, sin REST; quien tiene cuenta vuelve a abrir su lista cada ~12 min.
+
+Frecuencias tomadas del cliente real: `web/src/lib/config.ts`. **Los porcentajes de salas, caminos y actividades son supuestos de diseño**: no hay datos públicos de este tipo de app. La mejor calibración es grabar 2 o 3 sesiones reales y ajustar `flujo.json`.
+
+## 4. Los niveles
+
+Todas las pruebas duran lo mismo: 120 s de llegada, 30 s de estabilización y **600 s medidos**. Solo cambia el número de usuarios.
+
+Usuarios al mes se calcula con la guía de k6 y BlazeMeter: sesiones en hora pico ÷ (1,2 sesiones al día × 15 % en la hora pico) ÷ 20 % de activos al día.
 
 | | Baja | Media | Alta | Server killer |
 |---|---|---|---|---|
-| Usuarios activos | 120 | 240 | 600 | 6.000 |
-| Llegadas por segundo | 1 | 2 | 2 | 20 |
-| Llegadas por minuto | 60 | 120 | 120 | 1.200 |
-| Sesiones por hora | 3.600 | 7.200 | 7.200 | 72.000 |
-| Logins por segundo | 0,95 | 1,9 | 1,9 | 19 |
-| Registros por minuto | 3 | 6 | 6 | 60 |
-| Tableros creados por minuto | 3 | 6 | 6 | 60 |
-| Llegadas en los 10 min medidos | 600 | 1.200 | 1.200 | 12.000 |
-| Sesiones en toda la prueba (12,5 min) | ~810 | ~1.620 | ~1.980 | ~19.800 |
-| Velocidad de llegada durante los 120 s iniciales | 1/s | 2/s | 5/s | 50/s |
+| **Usuarios a la vez** | **100** | **300** | **600** | **6.000** |
+| Salas abiertas | ~30 | ~85 | ~170 | ~1.700 |
+| Llegadas por minuto | ~6 | ~12-15 | ~24 | ~240 |
+| Logins por minuto | ~0,8 | ~1,6 | ~3 | ~31 |
+| Sesiones por hora | ~350 | ~720 | ~1.440 | ~14.400 |
+| Usuarios al mes equivalentes | ~10.000 | ~20.000 | ~40.000 | ~400.000 |
+| Representa | Una facultad o un colegio | Una universidad mediana | Una universidad grande | La alta ×10, sostenida |
 
-La última fila es consecuencia de que todas las pruebas duren lo mismo: los usuarios tienen 120 s para completar el nivel, así que en la alta y en Server killer entran más rápido al principio que en el estado estable. Esa fase no se mide, pero la puede soportar o no la máquina (ver [MEDICIONES.md](MEDICIONES.md)).
+Con 100 usuarios hay menos clases: una sala de 30 movería demasiado la carga, y el planificador no abre salas que pasen mucho del objetivo. Por eso la sesión media baja un poco en ese nivel.
 
-### 3.2 Lo que realmente se generó (medido)
+Las cifras son de la simulación (la corrida de carga media tuvo 14,8 llegadas por minuto); cada corrida reporta las reales en el panel «Los 5 endpoints».
 
-La carga ofrecida se verifica en el propio generador. Ventana medida de las corridas en el PC (donde el servidor no limitó la carga):
+## 5. Cómo se mantiene constante el trabajo
 
-| | Baja | Media | Alta |
-|---|---|---|---|
-| Usuarios conectados (promedio) | 119 | 238 | 599 |
-| Entradas por segundo | 0,99 | 2,05 | 1,91 |
-| Logins por segundo | 0,94 | 2,01 | 1,86 |
-| Registros por segundo | 0,05 | 0,04 | 0,05 |
-| Listar tableros por segundo | 1,35 | 2,73 | 3,92 |
-| Tableros creados por segundo | 0,04 | 0,09 | 0,09 |
-| Mensajes WebSocket enviados por los clientes (por segundo) | 1.203 | 2.426 | 6.392 |
-| Mensajes WebSocket recibidos por los clientes (por segundo) | 11.505 | 22.863 | 59.135 |
-
-Dos lecturas importantes:
-
-1. **El servidor multiplica el tráfico por ~9,5.** Cada cursor o trazo que llega se reenvía a todos los demás del tablero. Por eso el trabajo en tiempo real crece con el cuadrado del tamaño del tablero: una clase de 30 genera unas 13 veces más reenvíos que un equipo de 5, con solo 6 veces más personas.
-2. **Media y alta tienen el mismo ritmo de login** (2,01 y 1,86/s), pero la alta mueve 2,6 veces más mensajes. Separa limpiamente el costo de autenticar del costo del tiempo real.
-
----
-
-## 4. ¿Es una carga realista?
-
-La forma estándar de pasar de usuarios registrados a usuarios concurrentes (guías de k6 y BlazeMeter) es:
-
-```
-sesiones en la hora pico = usuarios activos al día (DAU) × sesiones por usuario × fracción del día en la hora pico
-```
-
-Con valores típicos de SaaS educativo y de equipos: 1,2 sesiones por usuario al día y el 15 % del uso concentrado en la hora pico (un pico de unas 3,6 veces el promedio, dentro del rango de 2 a 5 que citan las guías). DAU/MAU de 20 % (rango típico 10 a 20 %).
-
-| Nivel | Sesiones en la hora pico | DAU equivalente | Usuarios registrados (MAU) equivalentes |
-|---|---|---|---|
-| Baja | 3.600 | ~20.000 | ~100.000 |
-| Media | 7.200 | ~40.000 | ~200.000 |
-| Alta | 7.200 (más largas) | ~40.000 | ~200.000 |
-| Server killer | 72.000 | ~400.000 | ~2.000.000 |
-
-La sesión de 2 minutos es corta para una clase completa: representa una **visita** (abrir el tablero, aportar, salir), que es el patrón que más estresa la entrada al sistema. Es una decisión a propósito: con sesiones de 40 minutos el login casi no aparece y se oculta el componente más caro del servidor. La carga alta usa sesiones de 5 minutos para representar el uso prolongado.
-
----
-
-## 5. Criterio de "buen rendimiento"
-
-Una prueba **pasa** si en los 10 minutos medidos se cumple todo esto:
-
-| Métrica | Límite | Por qué |
+| Qué se mantiene | Cómo | Qué lo verifica |
 |---|---|---|
-| p95 de REST (listar, unirse, crear) | < 300 ms | Umbral común de respuesta "instantánea" para una acción de interfaz |
-| p95 de login y de registro | < 1 s | El usuario tolera más en el inicio de sesión; scrypt es lento a propósito |
-| p95 del trazo terminado a los demás | < 150 ms | Por encima, la colaboración se percibe con retraso |
-| p95 de la vista previa | < 150 ms | Igual |
-| p99 del ping | < 100 ms | Mide la cola del bucle de eventos de Node: si el ping tarda, todo tarda |
-| Errores | < 1 % | |
+| Usuarios | Una sala nueva reemplaza a la que cierra (100 ± 2 y 600 a 612 en la simulación) | Gráfica «Usuarios activos» |
+| Llegadas | Horario independiente del servidor. Si el servidor se atasca, la carga no baja | «Peticiones por endpoint» |
+| Tamaño de los tableros | Cada persona guarda hasta 5 elementos propios; al crear otro borra el más viejo | Tabla «Inicio, mitad y final» |
+| Punto de partida | Antes de cada corrida se restaura la copia base de la base de datos | Registro: «Base restaurada» |
+| Llegada inicial | Sin login ni registro: usa sesiones ya emitidas, y no se mide. Arranca con la mezcla de salas del estado estable, donde las salas largas pesan más | La ventana arranca después |
 
-A las latencias del cliente se les resta el RTT de red medido sin carga antes de cada prueba (1-3 ms), así el criterio es el mismo en el PC y en la nube.
+La memoria tarda más que el resto en estabilizarse: los tableros sin nadie salen de memoria a los 5 minutos, así que RES sigue subiendo unos minutos hasta aplanarse. Es comportamiento del servidor, no carga que crece.
 
-El laboratorio **corta** una prueba si los errores pasan del 20 % durante 10 s o si un contenedor llega al 95 % de su memoria. La prueba queda registrada con el motivo y el tiempo que alcanzó a medir.
+Los tableros de la semilla tienen tamaños distintos, como los reales: mediana 80, p90 ~500 y p99 ~2.800 elementos, de cuatro tipos (70 % trazos, 20 % figuras, casi 10 % textos, 0,3 % imágenes). Cada sala toma uno libre, así que los tableros también se cargan en frío durante la prueba.
 
----
+Límites por IP desactivados: toda la carga sale de una sola máquina. En producción son 10 logins por minuto por IP, un límite que 30 estudiantes detrás de la misma IP sí pueden alcanzar.
+
+## 6. Criterio de «buen rendimiento»
+
+Una prueba **pasa** si en los 600 s medidos se cumple todo:
+
+| Métrica | Límite | Muestra mínima | Por qué |
+|---|---|---|---|
+| p95 de REST (listar, unirse, crear) | < 300 ms | 100 | Respuesta rápida a una acción de interfaz |
+| p95 de autenticación (login y registro) | < 1 s | 100 | Scrypt es lento a propósito |
+| p95 del trazo a los demás | < 150 ms | 100 | Por encima, la colaboración se percibe con retraso |
+| p95 de la vista previa | < 150 ms | 100 | Igual |
+| p99 del ping | < 100 ms | 1.000 | Mide la cola del hilo de JavaScript |
+| Errores por petición REST | < 1 % | – | Se calcula contra peticiones, no contra mensajes |
+
+Son umbrales de diseño, alineados con los [límites de respuesta de Nielsen](https://www.nngroup.com/videos/3-response-time-limits-interaction-design/) (0,1 s se siente instantáneo, 1 s no interrumpe el pensamiento).
+
+Con menos muestras que el mínimo, el percentil se reporta pero no se juzga. Es lo normal para login en carga baja (~8 en toda la ventana). Para evaluar el login por sí solo se necesita una prueba aparte.
+
+El laboratorio ya no corta una prueba por errores, así todas duran lo mismo y se ve cómo cae el servidor. Solo la corta si un contenedor llega al 95 % de su memoria. Si el generador supera el 85 % de ocupación (p95 de su hilo más ocupado), la prueba queda como no válida.
 
 ## Fuentes
 
-- Cálculo de concurrentes desde la hora pico: [Grafana k6, Calculate concurrent users](https://grafana.com/docs/k6/latest/testing-guides/calculate-concurrent-users/), [BlazeMeter](https://www.blazemeter.com/blog/calculate-concurrent-users-performance-testing)
-- Pico de 2 a 5 veces el promedio: [Zenocloud](https://zenocloud.io/blog/load-test/load-test-concurrent-visitors-google-analytics/), [LoadFocus](https://loadfocus.com/blog/2025/04/calculate-concurrent-users)
-- Ley de Little en pruebas de carga: [Microsoft TestingSpot](https://techcommunity.microsoft.com/blog/testingspotblog/little-law-of-queuing-theory-and-how-it-impacts-load-testers/367620)
-- DAU/MAU en SaaS B2B: [Gainsight](https://www.gainsight.com/essential-guide/product-management-metrics/dau-mau/)
-- Tamaño de reuniones (Zoom): [Zoom, How you Zoomed over the past year](https://www.zoom.com/en/blog/how-you-zoomed-over-the-past-year-2021/)
-- Frecuencias del cliente de Shareboard: `web/src/lib/config.ts` (`cursorThrottleMs: 45`, `previewThrottleMs: 33`, `heartbeatMs: 20000`)
+- Modelos abierto y cerrado: [Grafana k6](https://grafana.com/docs/k6/latest/using-k6/scenarios/concepts/open-vs-closed/)
+- Concurrentes desde la hora pico: [Grafana k6](https://grafana.com/docs/k6/latest/testing-guides/calculate-concurrent-users/), [BlazeMeter](https://www.blazemeter.com/blog/calculate-concurrent-users-performance-testing)
+- DAU/MAU: [Gainsight](https://www.gainsight.com/essential-guide/product-management-metrics/dau-mau/)
+- Frecuencias del cliente: `web/src/lib/config.ts`. Sesión de 30 días: `servidor/src/tokens.ts`

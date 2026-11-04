@@ -1,6 +1,24 @@
-{ "id": "server-killer", "name": "Server killer", "order": 5,
-  "question": "La carga alta x10: entran 20 usuarios por segundo y se quedan ~5 min, 6.000 activos. No busca pasar: muestra qué se rompe primero y cómo cae el servidor.",
-  "groups": [{ "type": "class", "count": 4, "size": 30 }, { "type": "team", "count": 22, "size": 5 }, { "type": "solo", "count": 20 }], "repeat": true,
-  "plan": { "mode": "steps", "users": [6000], "sessionSec": 300, "measureSec": 600 },
-  "quick": { "measureSec": 180 },
-  "thresholds": { "restP95": 300, "loginP95": 1000, "fanoutP95": 150, "previewP95": 150, "pingP99": 100, "errorRate": 0.01 } }
+{
+  "id": "server-killer",
+  "name": "Server killer",
+  "order": 5,
+  "question": "La carga alta multiplicada por 10, sostenida: 6.000 personas a la vez. No busca pasar: responde qué se rompe primero.",
+  "plan": {
+    "mode": "steps",
+    "users": [
+      6000
+    ],
+    "measureSec": 600
+  },
+  "quick": {
+    "measureSec": 180
+  },
+  "thresholds": {
+    "restP95": 300,
+    "loginP95": 1000,
+    "fanoutP95": 150,
+    "previewP95": 150,
+    "pingP99": 100,
+    "errorRate": 0.01
+  }
+}

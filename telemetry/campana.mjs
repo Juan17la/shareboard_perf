@@ -14,6 +14,7 @@ const { values: args, positionals } = parseArgs({
   options: {
     envs: { type: 'string', default: 'native,docker1,docker2' },
     tests: { type: 'string', default: 'baja,media,alta,server-killer' },
+    reps: { type: 'string', default: '1' }, // repeticiones por prueba: 3 para separar diferencias reales de ruido
     remote: { type: 'boolean', default: false },
     lab: { type: 'string', default: 'http://localhost:7070/' },
   },
@@ -77,14 +78,16 @@ for (const [i, env] of ENVS.entries()) {
     log(`${env} no quedó listo: ${st.error ?? 'sin detalle'}`);
     continue;
   }
-  for (const t of TESTS) {
-    const r = await post('api/test', { id: t });
-    if (r.error) {
-      log(`${env} / ${t}: ${r.error}`);
-      continue;
+  for (let rep = 0; rep < Number(args.reps); rep++) {
+    for (const t of TESTS) {
+      const r = await post('api/test', { id: t });
+      if (r.error) {
+        log(`${env} / ${t}: ${r.error}`);
+        continue;
+      }
+      await idle();
+      await sleep(60_000);
     }
-    await idle();
-    await sleep(60_000);
   }
 }
 log('Campaña terminada. Resultados en data/raw/ y en la pestaña Resultados.');

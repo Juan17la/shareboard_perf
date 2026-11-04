@@ -123,7 +123,7 @@ curl -fsSL https://raw.githubusercontent.com/Juan17la/shareboard_perf/main/setup
 
 El script instala `git`, `tmux`, Docker y Node 22 (con nvm), sube el límite de archivos abiertos a 65.535, agrega 2 GB de swap si la instancia tiene menos de 1,5 GB de RAM, clona el repositorio en `~/shareboard_perf` y arranca el laboratorio en modo `--target-only` dentro de `tmux`.
 
-El laboratorio levanta MongoDB en Docker, compila y arranca el servidor y el agente, y crea las 6.000 cuentas de prueba. **En una t3.small esto tarda ~25 minutos**: cada registro calcula scrypt, y la instancia hace unos 3 por segundo (ver [CONCLUSIONES.md](CONCLUSIONES.md)). Al final imprime la **IP privada** y el **token**.
+El laboratorio levanta MongoDB en Docker, compila y arranca el servidor y el agente, y crea los datos de prueba: 1.500 cuentas y 2.000 tableros. **En una t3.small esto tarda ~10 minutos**: cada registro calcula scrypt, y la instancia hace unos 3 por segundo. Al final imprime la **IP privada** y el **token**.
 
 <details>
 <summary>Los mismos pasos a mano</summary>
@@ -234,7 +234,7 @@ Costo de una campaña completa (2 h de las dos instancias, incluida la creación
 |---|---|---|
 | `Permission denied (publickey)` | Llave distinta a la del lanzamiento. Pasó con dos llaves de nombre parecido (`shareboard-perf.pem` y `shareboard-perf-key.pem`) | EC2 → la instancia → Details → *Key pair assigned at launch*; usa esa |
 | `node: command not found` por SSH sin sesión interactiva | nvm solo se carga en shells interactivos | `source ~/.nvm/nvm.sh` antes del comando, o `bash -lc '…'` |
-| "El remoto no está listo" al preparar Nube | El servidor sigue creando las 6.000 cuentas | Esperar (`tail ~/lab.log` en el servidor). `campana.mjs` reintenta solo |
+| "El remoto no está listo" al preparar Nube | El servidor sigue creando las cuentas de prueba | Esperar (`tail ~/lab.log` en el servidor). `campana.mjs` reintenta solo |
 | El generador no alcanza `:3000/health` | Falta la regla "All TCP desde el mismo grupo", o están en VPC distintas | Revisa el paso 3 y que las dos tengan `shareboard-perf-sg` |
 | `fallocate: Text file busy` | El swap ya existe | Nada que hacer: `swapon --show` lo confirma |
 | "Generador saturado" en una prueba | El generador no dio abasto | Esa prueba no vale; usa una instancia generadora más grande |

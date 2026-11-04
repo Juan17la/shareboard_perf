@@ -1,6 +1,5 @@
 { "id": "reposo", "name": "Reposo", "order": 1,
   "question": "Servidor encendido sin nadie: el consumo base de la máquina.",
-  "groups": [{ "type": "class", "count": 4, "size": 30 }, { "type": "team", "count": 22, "size": 5 }, { "type": "solo", "count": 20 }],
   "plan": { "mode": "steps", "users": [0], "stepSec": 750, "warmSec": 0, "rampSec": 1 },
   "quick": { "stepSec": 330 },
   "thresholds": {} }

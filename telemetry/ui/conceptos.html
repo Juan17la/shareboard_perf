@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conceptos del laboratorio</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  .doc { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 32px; max-width: 1180px; margin: 0 auto; padding: 20px 20px 80px; }
+  .toc { position: sticky; top: 64px; align-self: start; font-size: 13px; display: grid; gap: 2px; max-height: calc(100vh - 80px); overflow: auto; }
+  .toc a { color: var(--text-2); text-decoration: none; padding: 4px 8px; border-radius: 6px; }
+  .toc a:hover { background: var(--surface); color: var(--text); }
+  article { min-width: 0; max-width: 78ch; font-size: 15px; line-height: 1.6; }
+  article h1 { font-size: 28px; line-height: 1.2; margin: 0 0 10px; }
+  article h2 { font-size: 21px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 44px 0 10px; display: block; scroll-margin-top: 70px; }
+  article h3 { font-size: 16px; margin: 24px 0 6px; }
+  article p { margin: 8px 0; }
+  article code { font-size: 13px; background: var(--grid); padding: 1px 5px; border-radius: 4px; }
+  .lead { font-size: 17px; color: var(--text-2); }
+  .eg { border-left: 3px solid var(--accent); padding: 8px 14px; margin: 12px 0; background: var(--surface); border-radius: 0 8px 8px 0; }
+  .eg b:first-child { display: block; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .demo { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 14px 0; }
+  .demo h4 { margin: 0 0 8px; font-size: 14px; }
+  .demo label { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-2); margin: 6px 0; flex-wrap: wrap; }
+  .demo input[type=range] { flex: 1; min-width: 140px; height: auto; padding: 0; border: 0; background: none; }
+  .demo output { font-weight: 600; color: var(--text); min-width: 56px; font-variant-numeric: tabular-nums; }
+  .res { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-top: 10px; }
+  .res div { background: var(--bg); border-radius: 6px; padding: 8px 10px; font-size: 12px; color: var(--muted); }
+  .res b { display: block; font-size: 20px; color: var(--text); font-variant-numeric: tabular-nums; }
+  .dots { display: grid; grid-template-columns: repeat(25, 1fr); gap: 3px; margin-top: 10px; }
+  .dots i { aspect-ratio: 1; border-radius: 2px; background: var(--p50); }
+  .dots i.slow { background: var(--s2); }
+  .dots i.p { outline: 2px solid var(--text); outline-offset: 1px; }
+  .res b { overflow-wrap: anywhere; }
+  .bar .navlink { white-space: nowrap; }
+  .bar-q { height: 14px; border-radius: 4px; background: var(--grid); overflow: hidden; margin-top: 8px; }
+  .bar-q i { display: block; height: 100%; background: var(--s2); }
+  article table { font-size: 13px; margin: 10px 0; display: block; overflow-x: auto; }
+  article td { white-space: normal; vertical-align: top; }
+  article td:first-child { font-weight: 600; min-width: 130px; }
+  .path { width: 100%; height: auto; margin: 10px 0; }
+  .path text { font: 12px system-ui, sans-serif; fill: var(--text); }
+  .path .sub { font-size: 10.5px; fill: var(--muted); }
+  .path rect { fill: var(--surface); stroke: var(--border); }
+  .path .hot { stroke: var(--s2); stroke-width: 2; }
+  .path line, .path path { stroke: var(--muted); fill: none; }
+  .story { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin: 12px 0; background: var(--surface); }
+  .story h3 { margin: 0 0 6px; }
+  .story dl { display: grid; grid-template-columns: 100px 1fr; gap: 3px 12px; margin: 0; font-size: 14px; }
+  .story dt { color: var(--muted); font-size: 12.5px; padding-top: 2px; }
+  .story dd { margin: 0; }
+  .q { font-weight: 600; margin-top: 18px; }
+  @media (max-width: 860px) { .doc { grid-template-columns: 1fr; } .toc { position: static; max-height: none; grid-template-columns: repeat(2, 1fr); } .story dl { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 4 4-7 5 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><strong>Conceptos del laboratorio</strong></div>
+  <a class="navlink" href="index.html">Volver al laboratorio</a>
+</header>
+<div class="doc">
+<nav class="toc" aria-label="Contenido">
+  <a href="#viaje">El viaje de una petición</a>
+  <a href="#percentiles">p50, p95 y p99</a>
+  <a href="#carga">Usuarios, llegadas y Little</a>
+  <a href="#constante">Trabajo constante</a>
+  <a href="#cpu">CPU: us, sy, wa, id, st</a>
+  <a href="#hilo">Hilo único y Amdahl</a>
+  <a href="#pool">Threadpool y scrypt</a>
+  <a href="#colas">Colas y saturación</a>
+  <a href="#cuota">Cuota del contenedor</a>
+  <a href="#memoria">Memoria residente</a>
+  <a href="#disco">Disco: IOPS y caudal</a>
+  <a href="#red">Red y reenvío</a>
+  <a href="#graficas">Qué dice cada gráfica</a>
+  <a href="#historias">Cinco historias de fallo</a>
+  <a href="#sustentacion">Para la sustentación</a>
+</nav>
+<article>
+<h1>Cómo entender lo que está pasando</h1>
+<p class="lead">Todas las gráficas responden una sola pregunta: <b>¿dónde está esperando la aplicación?</b> Aquí está cada concepto en palabras simples, con un ejemplo y la gráfica donde lo verás.</p>
+<div class="eg"><b>Sobre los números de ejemplo</b>Los que dicen «medido» vienen de la campaña del 2 de noviembre, hecha con el modelo de carga anterior. Sirven para entender el mecanismo, pero las capacidades se deben citar de las corridas nuevas.</div>
+
+<h2 id="viaje">El viaje de una petición</h2>
+<p>Cuando alguien abre un tablero, su petición pasa por varias estaciones. En cada una puede hacer fila, y cada métrica mira una estación distinta.</p>
+<svg class="path" viewBox="0 0 720 210" role="img" aria-label="Recorrido: usuario, red, fila, hilo de JavaScript, y desde ahí threadpool de scrypt o MongoDB y disco">
+  <defs><marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" style="fill:var(--muted);stroke:none"/></marker></defs>
+  <rect x="6" y="50" width="90" height="56" rx="6"/><text x="51" y="74" text-anchor="middle">Usuario</text><text class="sub" x="51" y="92" text-anchor="middle">latencia total</text>
+  <rect x="128" y="50" width="90" height="56" rx="6"/><text x="173" y="74" text-anchor="middle">Red</text><text class="sub" x="173" y="92" text-anchor="middle">MB/s, RTT</text>
+  <rect x="250" y="50" width="90" height="56" rx="6"/><text x="295" y="74" text-anchor="middle">Fila</text><text class="sub" x="295" y="92" text-anchor="middle">usuario − servidor</text>
+  <rect class="hot" x="372" y="50" width="110" height="56" rx="6"/><text x="427" y="74" text-anchor="middle">Hilo de JavaScript</text><text class="sub" x="427" y="92" text-anchor="middle">uno solo, % de 1 núcleo</text>
+  <rect x="520" y="6" width="190" height="52" rx="6"/><text x="615" y="28" text-anchor="middle">Threadpool: scrypt</text><text class="sub" x="615" y="45" text-anchor="middle">4 hilos, login y registro</text>
+  <rect x="520" y="76" width="90" height="56" rx="6"/><text x="565" y="100" text-anchor="middle">MongoDB</text><text class="sub" x="565" y="118" text-anchor="middle">CPU, RES</text>
+  <rect x="630" y="76" width="80" height="56" rx="6"/><text x="670" y="100" text-anchor="middle">Disco</text><text class="sub" x="670" y="118" text-anchor="middle">IOPS, %util</text>
+  <line x1="96" y1="78" x2="126" y2="78" marker-end="url(#a)"/><line x1="218" y1="78" x2="248" y2="78" marker-end="url(#a)"/><line x1="340" y1="78" x2="370" y2="78" marker-end="url(#a)"/>
+  <line x1="482" y1="68" x2="518" y2="38" marker-end="url(#a)"/><line x1="482" y1="88" x2="518" y2="100" marker-end="url(#a)"/><line x1="610" y1="104" x2="628" y2="104" marker-end="url(#a)"/>
+  <text class="sub" x="6" y="160">El tiempo real (cursor, trazos) solo pasa por Red → Fila → Hilo de JavaScript → Red, sin tocar la base de datos.</text>
+  <text class="sub" x="6" y="180">Los cambios en el tablero llegan a MongoDB después: se agrupan y se escriben como máximo cada segundo.</text>
+</svg>
+
+<h2 id="percentiles">p50, p95 y p99</h2>
+<p>Ordena todas las peticiones de la más rápida a la más lenta. El <b>p50</b> es la del medio: la experiencia típica. El <b>p95</b> deja al 5 % por encima. El <b>p99</b>, al 1 %.</p>
+<p>El proyecto pide percentiles y no promedio porque el promedio esconde lo que siente la gente: 99 respuestas de 10 ms y una de 5 segundos dan un promedio de 60 ms, un valor que nadie experimentó.</p>
+<div class="demo">
+  <h4>Pruébalo: 100 peticiones</h4>
+  <label>Peticiones lentas <input type="range" id="pSlow" min="0" max="30" value="4"><output id="pSlowO"></output></label>
+  <label>Cuánto tardan las lentas <input type="range" id="pMs" min="100" max="3000" step="100" value="800"><output id="pMsO"></output></label>
+  <div class="dots" id="pDots" aria-hidden="true"></div>
+  <div class="res"><div>Promedio<b id="pAvg"></b></div><div>p50<b id="p50"></b></div><div>p95<b id="p95"></b></div><div>p99<b id="p99"></b></div></div>
+  <p class="hint">Con 4 lentas, el p50 y el p95 siguen en 20 ms y solo el p99 lo delata. Sube a 6 y el p95 salta de golpe. Las rápidas tardan 20 ms.</p>
+</div>
+<h3>Qué significa cada combinación</h3>
+<table>
+  <thead><tr><th>Lo que ves</th><th>Qué está pasando</th></tr></thead>
+  <tbody>
+    <tr><td>Todos planos y juntos</td><td>Holgado: todo el mundo recibe el mismo servicio.</td></tr>
+    <tr><td>p50 plano, p99 sube</td><td>Empieza a formarse fila, o hay pausas ocasionales (recolector de basura, cuota del contenedor). Primer aviso.</td></tr>
+    <tr><td>p50 sube también</td><td>Ya le pasa a la mayoría: el recurso está saturado.</td></tr>
+    <tr><td>Todos pegados a 15 s</td><td>Las peticiones llegan al tiempo límite del cliente. El servidor no está respondiendo.</td></tr>
+  </tbody>
+</table>
+<p><b>Cuidado con las muestras pequeñas.</b> Con 30 registros, el p95 es el segundo peor valor: dos casos cambian el resultado. Por eso el laboratorio no juzga un p95 con menos de 100 muestras ni un p99 con menos de 1.000. También cuenta en los percentiles a quien no fue atendido: si no, solo describirían a los afortunados.</p>
+<div class="eg"><b>Medido</b>En AWS con carga baja, el registro «falló» con p95 de 1.047 ms por 2 casos de 32. El login, con el mismo scrypt y 536 casos, tuvo p95 de 654 ms. El fallo era de la muestra, no de la máquina.</div>
+
+<h2 id="carga">Usuarios, llegadas y la ley de Little</h2>
+<p>Tres números están amarrados por una ley muy simple:</p>
+<p style="text-align:center;font-size:17px"><b>usuarios activos = llegadas por segundo × tiempo que se queda cada uno</b></p>
+<p>Es como un salón: si entra un estudiante por minuto y cada uno se queda 30 minutos, adentro hay 30 personas.</p>
+<div class="demo">
+  <h4>Calculadora</h4>
+  <label>Usuarios a la vez <input type="range" id="lL" min="50" max="1000" step="50" value="300"><output id="lLO"></output></label>
+  <label>Minutos por sesión <input type="range" id="lW" min="2" max="60" value="25"><output id="lWO"></output></label>
+  <div class="res"><div>Llegan por minuto<b id="lA"></b></div><div>Sesiones por hora<b id="lS"></b></div><div>Logins por minuto (13 %)<b id="lLog"></b></div><div>Usuarios al mes aprox.<b id="lM"></b></div></div>
+  <p class="hint">Pon 2 minutos: es lo que hacía el modelo anterior. Los logins se multiplican, aunque los usuarios sean los mismos. Usuarios al mes = sesiones por hora ÷ (1,2 sesiones al día × 15 % en la hora pico) ÷ 20 % activos al día.</p>
+</div>
+<h3>Por qué una sala no depende del servidor</h3>
+<p><b>Modelo cerrado:</b> el siguiente usuario espera a que el anterior termine. Si el servidor se pone lento, llegan menos usuarios y la carga baja sola, justo cuando querías ver el problema. Los resultados se ven mejores de lo que son.</p>
+<p><b>Modelo abierto:</b> la gente llega cuando llega, sin importar qué tan lento vaya el servidor. Eso hace este laboratorio: cada usuario tiene hora de llegada y de salida. Si no logra entrar, reintenta dos veces y se rinde, pero su lugar no se le da a otro antes de tiempo.</p>
+<div class="eg"><b>Ejemplo</b>Un restaurante lento no hace que la gente llegue más tarde a almorzar: solo hace crecer la fila. Eso es lo que debe mostrar una prueba de carga.</div>
+
+<h2 id="constante">Trabajo constante, y por qué no basta con usuarios constantes</h2>
+<p>Tener 300 usuarios conectados no garantiza que el servidor haga siempre el mismo trabajo. Hay que mantener estables cuatro cosas:</p>
+<table>
+  <thead><tr><th>Qué</th><th>Problema si no</th><th>Cómo se logra</th></tr></thead>
+  <tbody>
+    <tr><td>Usuarios</td><td>La latencia cambia y no sabes por qué.</td><td>Cuando una sala cierra se abre otra.</td></tr>
+    <tr><td>Ritmo de llegadas</td><td>Una tormenta de logins parece una falla del servidor.</td><td>Llegan al ritmo que dicta Little. La llegada inicial no hace login ni se mide.</td></tr>
+    <tr><td>Tamaño de los tableros</td><td>Cada guardado reescribe el tablero completo: si crece, cada segundo cuesta más.</td><td>Quien ya tiene 5 elementos propios borra el más viejo al crear otro.</td></tr>
+    <tr><td>Punto de partida</td><td>La segunda prueba hereda los tableros de la primera.</td><td>Antes de cada corrida se restaura una copia de la base.</td></tr>
+  </tbody>
+</table>
+<div class="eg"><b>Medido</b>Con el modelo anterior los tableros llegaron a 1.347 elementos y 3,2 MB. En PC con carga alta, sin cambiar el número de usuarios, el ping p99 subió de 57 a 96 ms dentro de la misma ventana. Mira la tabla <b>Inicio, mitad y final</b>: las filas de carga no deben cambiar.</div>
+
+<h2 id="cpu">CPU: us, sy, wa, id y st</h2>
+<p>Cada instante de un núcleo cae en una categoría. Son las columnas de <code>top</code>.</p>
+<table>
+  <thead><tr><th>Columna</th><th>Significa</th><th>En Shareboard</th></tr></thead>
+  <tbody>
+    <tr><td>us (usuario)</td><td>Ejecuta el programa.</td><td>JavaScript, scrypt, MongoDB.</td></tr>
+    <tr><td>sy (sistema)</td><td>Ejecuta el kernel a pedido del programa.</td><td>Enviar y recibir por la red. Cada mensaje reenviado es una llamada al kernel.</td></tr>
+    <tr><td>wa (espera de E/S)</td><td>Está libre, pero hay alguien esperando al disco.</td><td>Si es alto, tu problema es el disco, no la CPU.</td></tr>
+    <tr><td>id (ocioso)</td><td>No hay nada que hacer.</td><td>Lo que te sobra.</td></tr>
+    <tr><td>st (robado)</td><td>Tu máquina virtual quería CPU y el hipervisor se la dio a otro.</td><td>Solo en la nube.</td></tr>
+  </tbody>
+</table>
+<p><b>Una trampa:</b> en el PC y en Docker el generador corre en la misma máquina, y estas columnas también lo cuentan. Para comparar entornos usa <b>CPU por proceso</b>, en núcleos.</p>
+<div class="eg"><b>Medido</b>En PC con carga alta había 3,27 núcleos ocupados: 1,27 eran servidor y base de datos, y unos 2 eran el generador y el resto del sistema.</div>
+<p><b>Núcleo físico o hilo:</b> una t3.small tiene 2 vCPU, pero son un solo núcleo físico con hyperthreading. Dos tareas a la vez comparten las mismas unidades de ejecución y la misma caché, así que no rinden como dos núcleos.</p>
+
+<h2 id="hilo">Hilo único y la parte secuencial (Amdahl)</h2>
+<p>Node ejecuta todo tu JavaScript en un solo hilo: un cajero para toda la fila. Da igual cuántos núcleos tenga la máquina, ese cajero solo usa uno.</p>
+<p>La <b>ley de Amdahl</b> dice que la parte que no se puede repartir pone el techo. Si un trabajo es 100 % secuencial, 8 núcleos dan la misma velocidad que uno. Lo que sí ayuda es un núcleo más rápido, o cambiar el diseño a varios procesos.</p>
+<div class="eg"><b>Medido</b>Cada mensaje entregado costaba 12,7 µs de hilo en el PC y unos 30 µs en la t3.small. Con 12,7 µs, el hilo se llena en 1 ÷ 0,0000127 ≈ <b>78.700 mensajes por segundo</b>. Por eso una máquina con el 81 % de CPU libre puede estar en su límite.</div>
+<p><b>Dónde verlo:</b> en <b>CPU del servidor por hilo</b>, la línea «Hilo JavaScript» cerca de 100 mientras <b>CPU por proceso</b> muestra poco más de un núcleo.</p>
+
+<h2 id="pool">Threadpool y scrypt: la caché importa</h2>
+<p>La contraseña se verifica con scrypt, diseñado para ser lento y para usar mucha memoria. No corre en el hilo de JavaScript, sino en un grupo de 4 hilos (<b>threadpool de libuv</b>). Cuatro cajeros aparte, solo para contraseñas.</p>
+<p>Cada verificación recorre al azar un bloque de 16 MB, que no cabe en la caché L2 (2 MB por P-core en el PC, 1 MB en el Xeon de AWS). Muchos accesos fallan en caché y van a la RAM, mucho más lenta. Por eso la frecuencia y la caché cambian tanto el resultado.</p>
+<div class="eg"><b>Medido</b>Un login costaba ~142 ms de CPU en el PC y más de 300 ms en AWS. Con 4 hilos, el PC atiende 4 ÷ 0,142 ≈ <b>28 logins por segundo</b>. Si llegan más, la fila crece sin parar. En esa prueba el PC falló con el 57 % de la CPU libre: el límite era el tamaño del pool, no la máquina.</div>
+<p><b>Una excepción:</b> el PIN de un tablero usa <code>scryptSync</code>, que corre en el hilo de JavaScript y detiene todo lo demás mientras calcula. Por eso la carga incluye tableros con PIN e invitados.</p>
+
+<h2 id="colas">Colas: por qué todo se rompe de golpe</h2>
+<p>La latencia no sube en línea recta con la carga. Se mantiene casi plana y de repente se dispara. La fórmula de una cola simple explica por qué:</p>
+<p style="text-align:center;font-size:17px"><b>espera media = tiempo de servicio × ρ ÷ (1 − ρ)</b></p>
+<p><b>ρ</b> es la fracción del tiempo que el recurso está ocupado.</p>
+<div class="demo">
+  <h4>Mueve la utilización</h4>
+  <label>Ocupación ρ <input type="range" id="qR" min="10" max="99" value="75"><output id="qRO"></output></label>
+  <label>Tiempo de servicio <input type="range" id="qS" min="1" max="50" value="5"><output id="qSO"></output></label>
+  <div class="res"><div>Espera en fila<b id="qW"></b></div><div>Veces el servicio<b id="qX"></b></div></div>
+  <div class="bar-q"><i id="qB"></i></div>
+  <p class="hint">De 50 % a 75 % la espera se triplica. De 90 % a 99 %, se multiplica por 11. Es un modelo simple, útil para ver la forma de la curva.</p>
+</div>
+<div class="eg"><b>Medido</b>Misma carga, dos entornos. PC: hilo al 75 %, ping p99 de 73 ms. Contenedor de 2 CPU: hilo al 93 %, ping p99 de 1.225 ms. Dieciocho puntos más de ocupación multiplicaron la espera casi por 17.</div>
+<p><b>Dónde verlo:</b> en <b>Curva de saturación</b>. El punto donde la nube se dobla es el límite real, y conviene dimensionar antes de llegar a él.</p>
+
+<h2 id="cuota">Cuota del contenedor: frenado con la máquina libre</h2>
+<p><code>cpus: 1</code> no reserva un núcleo. Le da al contenedor <b>100 ms de CPU cada 100 ms</b>, sumando todos sus hilos. Si varios hilos trabajan a la vez, gastan la cuota en 20 o 30 ms y el kernel congela <b>todo el contenedor</b> hasta el siguiente periodo.</p>
+<div class="eg"><b>Ejemplo</b>Un plan de datos que se reinicia cada 100 ms. Si cuatro personas descargan a la vez, se acaba enseguida y todos quedan sin servicio hasta el próximo ciclo, aunque en promedio no hayan usado tanto.</div>
+<div class="eg"><b>Medido</b>Contenedor de 1 CPU con carga media: usaba solo 0,69 CPU de promedio, y aun así estuvo frenado 687 ms/s con el 86 % de la máquina libre, y el ping, que solo contesta «pong», llegó a 680 ms en p99.</div>
+<p><b>Dónde verlo:</b> en <b>Contenedor frenado</b>. El valor se suma entre núcleos, así que puede pasar de 1.000 ms/s.</p>
+
+<h2 id="memoria">Memoria residente (RES)</h2>
+<p><b>RES</b> es la RAM física que ocupa el proceso de verdad, no la que pidió reservar. Define el tamaño mínimo de la máquina: pico de RES más margen.</p>
+<table>
+  <thead><tr><th>Forma de la línea</th><th>Qué significa</th></tr></thead>
+  <tbody>
+    <tr><td>Sube y se aplana</td><td>Normal: cachés llenas.</td></tr>
+    <tr><td>Sierra suave</td><td>Normal: el recolector de basura libera y vuelve a crecer.</td></tr>
+    <tr><td>Sube sin parar con carga constante</td><td>Fuga de memoria, o algo crece sin límite. Confírmalo con una prueba más larga.</td></tr>
+    <tr><td>Cerca del límite del contenedor</td><td>El kernel lo va a matar (OOM). El laboratorio corta la prueba al 95 %.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="disco">Disco: IOPS, caudal y %util</h2>
+<p><b>IOPS</b> cuenta operaciones por segundo. <b>MB/s</b> cuenta cuántos datos se mueven. Son preguntas distintas, como cuántos viajes hace un camión y cuánta carga lleva.</p>
+<table>
+  <thead><tr><th>Patrón</th><th>Qué necesitas</th></tr></thead>
+  <tbody>
+    <tr><td>Muchas IOPS, pocos MB/s</td><td>Operaciones pequeñas, típico de bases de datos. Necesitas IOPS.</td></tr>
+    <tr><td>Pocas IOPS, muchos MB/s</td><td>Archivos grandes. Necesitas caudal.</td></tr>
+    <tr><td>Ambos bajos</td><td>El disco no es tu problema.</td></tr>
+  </tbody>
+</table>
+<p><b>%util</b> es la fracción del tiempo con alguna operación en curso. Cerca de 100 % en un disco tradicional significa saturación. Un NVMe atiende muchas en paralelo y puede marcar 100 % sin estar lleno, así que confírmalo con <b>wa</b> y con la latencia.</p>
+<div class="eg"><b>Ejemplo en Shareboard</b>Un tablero activo no escribe en cada trazo: los cambios se agrupan y se guarda el documento completo como máximo cada segundo. Por eso 300 usuarios dibujando no significan miles de escrituras, pero un tablero más grande sí hace cada escritura más pesada.</div>
+
+<h2 id="red">Red y el reenvío (crece con el cuadrado)</h2>
+<p>En un tablero de <b>n</b> personas, cada mensaje se reenvía a las otras <b>n − 1</b>. Si todas envían, el servidor hace n × (n − 1) entregas. Duplicar una sala casi cuadruplica su trabajo.</p>
+<div class="demo">
+  <h4>Una sala</h4>
+  <label>Personas en la sala <input type="range" id="fN" min="2" max="40" value="5"><output id="fNO"></output></label>
+  <label>Mensajes/s por persona <input type="range" id="fM" min="1" max="30" value="3"><output id="fMO"></output></label>
+  <div class="res"><div>Llegan al servidor/s<b id="fI"></b></div><div>Salen del servidor/s<b id="fO"></b></div><div>Hilo JS (12,7 µs c/u)<b id="fC"></b></div></div>
+  <p class="hint">Compara 5 y 30 personas: 6 veces más gente y unas 44 veces más trabajo. En una clase real casi nadie envía a la vez, por eso el rol «espectador» es casi silencioso.</p>
+</div>
+<p><b>Entrada y salida:</b> en la nube la salida es varias veces la entrada por este reenvío. En el PC y en Docker el generador está en la misma máquina, el tráfico pasa por <code>lo</code> y ambas salen iguales. Solo en la nube tiene sentido comparar con el ancho de banda de la ficha (t3.small: unos 16 MB/s de base).</p>
+
+<h2 id="graficas">Qué dice cada gráfica</h2>
+<table>
+  <thead><tr><th>Gráfica o panel</th><th>Pregunta que responde</th><th>Señal de alarma</th></tr></thead>
+  <tbody>
+    <tr><td>¿Dónde está esperando?</td><td>Cuál componente es el cuello de botella.</td><td>Un componente en «saturado».</td></tr>
+    <tr><td>Los 5 endpoints</td><td>Qué hace cada uno, cuánto se usa y cuánto tarda.</td><td>Errores &gt; 1 %.</td></tr>
+    <tr><td>p50 y p95 por endpoint</td><td>¿Le pasa a todos o a unos pocos?</td><td>El p50 sube.</td></tr>
+    <tr><td>Tiempo real: p50 y p95</td><td>¿Se siente fluida la colaboración?</td><td>Ping sube: hilo ocupado.</td></tr>
+    <tr><td>¿Dentro o haciendo fila?</td><td>¿Lento al atender o lento al empezar a atender?</td><td>Las líneas se separan.</td></tr>
+    <tr><td>¿El trabajo es constante?</td><td>¿La prueba es válida?</td><td>Rampa con usuarios fijos.</td></tr>
+    <tr><td>Peticiones por endpoint</td><td>¿La mezcla es la planeada?</td><td>Login dominante.</td></tr>
+    <tr><td>CPU por proceso</td><td>¿Quién consume, en núcleos?</td><td>Servidor cerca de sus núcleos disponibles.</td></tr>
+    <tr><td>CPU del servidor por hilo</td><td>¿Hilo único o threadpool?</td><td>JavaScript cerca de 100, libuv cerca de 400.</td></tr>
+    <tr><td>Curva de saturación</td><td>¿Dónde está el codo?</td><td>Puntos que suben en vertical.</td></tr>
+    <tr><td>Inicio, mitad y final</td><td>¿Se degrada con el tiempo?</td><td>Latencia sube con carga plana.</td></tr>
+    <tr><td>Salas por tipo</td><td>¿Qué tan pesada es la mezcla ahora?</td><td>Picos por clases grandes.</td></tr>
+    <tr><td>Errores y abandonos</td><td>¿Quién no logró entrar?</td><td>Cualquier valor sostenido &gt; 0.</td></tr>
+    <tr><td>Núcleos (mapa de calor)</td><td>¿Se reparte el trabajo?</td><td>El hilo salta entre núcleos: la suma importa más que uno solo.</td></tr>
+    <tr><td>RES, disco, red</td><td>Las tres métricas de recursos del proyecto.</td><td>Crecimiento sin fin, %util alto, salida cerca de la ficha.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="historias">Cinco historias de fallo</h2>
+<div class="story"><h3>1. El hilo de JavaScript se llena</h3><dl>
+  <dt>Qué ves</dt><dd>Hilo JS sobre 85 %. Ping y trazo suben. La máquina tiene CPU libre.</dd>
+  <dt>Qué pasa</dt><dd>Cada mensaje hace fila para el único hilo. El reenvío serializa el mensaje por cada destinatario.</dd>
+  <dt>Componente</dt><dd>El núcleo que ejecuta la parte secuencial.</dd>
+  <dt>Arreglo</dt><dd>Serializar una sola vez por difusión; a largo plazo, varios procesos con afinidad por tablero.</dd></dl></div>
+<div class="story"><h3>2. Tormenta de logins</h3><dl>
+  <dt>Qué ves</dt><dd>libuv cerca de 400 %, login en 15 s, errores TIMEOUT. El tiempo real sigue bien.</dd>
+  <dt>Qué pasa</dt><dd>Llegan más logins de los que 4 hilos pueden calcular. El servidor sigue trabajando en peticiones que el cliente ya abandonó.</dd>
+  <dt>Componente</dt><dd>Threadpool de libuv, y caché y RAM por scrypt.</dd>
+  <dt>Arreglo</dt><dd>Limitar logins simultáneos y ajustar <code>UV_THREADPOOL_SIZE</code> a los núcleos.</dd></dl></div>
+<div class="story"><h3>3. Contenedor frenado con la máquina libre</h3><dl>
+  <dt>Qué ves</dt><dd>Frenado alto, id alto, p50 bien y p99 muy alto. Hasta el ping se dispara.</dd>
+  <dt>Qué pasa</dt><dd>Ráfagas de varios hilos gastan la cuota y el kernel congela el contenedor.</dd>
+  <dt>Componente</dt><dd>Límite del cgroup, no el hardware.</dd>
+  <dt>Arreglo</dt><dd>Más cuota, o menos hilos simultáneos.</dd></dl></div>
+<div class="story"><h3>4. Se degrada con el tiempo</h3><dl>
+  <dt>Qué ves</dt><dd>Usuarios y mensajes planos, pero en la tabla de tercios suben REST, ping, RES y mongod.</dd>
+  <dt>Qué pasa</dt><dd>Algo crece: tableros, memoria, documentos. Guardar y enviar cada tablero cuesta más.</dd>
+  <dt>Componente</dt><dd>Hilo de JavaScript al serializar, y MongoDB al reescribir.</dd>
+  <dt>Arreglo</dt><dd>Guardar cambios en vez del documento entero; límites de tamaño.</dd></dl></div>
+<div class="story"><h3>5. Unirse tarda y todo se congela a ratos</h3><dl>
+  <dt>Qué ves</dt><dd>«Unirse» con p95 alto, escalones en el ping, muchos invitados a tableros con PIN.</dd>
+  <dt>Qué pasa</dt><dd><code>scryptSync</code> detiene el hilo de JavaScript durante cada PIN, además de la carga en frío del tablero.</dd>
+  <dt>Componente</dt><dd>Hilo de JavaScript bloqueado.</dd>
+  <dt>Arreglo</dt><dd>Usar la versión asíncrona de scrypt para el PIN.</dd></dl></div>
+
+<h2 id="sustentacion">Para la sustentación</h2>
+<p class="q">¿Por qué ese número y no otro? ¿Cómo lo midieron?</p>
+<p>Di el número y su archivo fuente. Ejemplo: «Tomamos el p95 de la ventana de 600 s; el agente lee <code>/proc</code> cada segundo fuera del servidor y el generador registra cada petición. Los datos crudos están en <code>resultados/</code>». Luego explica por qué ese número: el costo por mensaje dividido en la capacidad del hilo.</p>
+<p class="q">¿Qué componente causa ese comportamiento?</p>
+<p>Abre el panel <b>¿Dónde está esperando?</b>. Nombra el componente y su evidencia: «El hilo de JavaScript al X %, con Y núcleos libres: es la parte secuencial de Amdahl».</p>
+<p class="q">Si la carga se multiplicara por diez, ¿qué se rompería primero?</p>
+<p>Server killer es la carga alta ×10, sostenida y sin tormenta inicial de logins. Cita lo que se rompió en el orden en que pasó, y separa lo que mediste de lo que calculas.</p>
+<p class="q">¿Qué opción descartaron y por qué?</p>
+<p>Compara las tres con las mismas pruebas: si aguanta, qué le sobra, qué le falta y cuánto cuesta. Da la razón en términos del componente, por ejemplo: «un solo núcleo físico, con el doble de costo por login».</p>
+</article>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const n = (v, d = 0) => Number(v).toLocaleString('es-CO', { maximumFractionDigits: d });
+  const ms = (v) => (v >= 1000 ? `${n(v / 1000, 1)} s` : `${n(v, v < 10 ? 1 : 0)} ms`);
+  function bind(ids, fn) { for (const id of ids) $(id).addEventListener('input', fn); fn(); }
+
+  const dots = $('pDots');
+  dots.innerHTML = '<i></i>'.repeat(100);
+  bind(['pSlow', 'pMs'], () => {
+    const slow = +$('pSlow').value;
+    const v = +$('pMs').value;
+    $('pSlowO').textContent = `${slow} de 100`;
+    $('pMsO').textContent = ms(v);
+    const all = Array.from({ length: 100 }, (_, i) => (i < 100 - slow ? 20 : v));
+    $('pAvg').textContent = ms(all.reduce((a, b) => a + b, 0) / 100);
+    $('p50').textContent = ms(all[49]);
+    $('p95').textContent = ms(all[94]);
+    $('p99').textContent = ms(all[98]);
+    [...dots.children].forEach((d, i) => { d.className = `${i >= 100 - slow ? 'slow' : ''} ${[49, 94, 98].includes(i) ? 'p' : ''}`; });
+  });
+
+  bind(['lL', 'lW'], () => {
+    const L = +$('lL').value;
+    const W = +$('lW').value;
+    $('lLO').textContent = n(L);
+    $('lWO').textContent = `${W} min`;
+    const perMin = L / W;
+    $('lA').textContent = n(perMin, 1);
+    $('lS').textContent = n(perMin * 60);
+    $('lLog').textContent = n(perMin * 0.13, 1);
+    $('lM').textContent = n(((perMin * 60) / (1.2 * 0.15) / 0.2) / 1000, 0) + ' mil';
+  });
+
+  bind(['qR', 'qS'], () => {
+    const r = +$('qR').value / 100;
+    const s = +$('qS').value;
+    $('qRO').textContent = `${Math.round(r * 100)} %`;
+    $('qSO').textContent = `${s} ms`;
+    const x = r / (1 - r);
+    $('qW').textContent = ms(s * x);
+    $('qX').textContent = `${n(x, 1)} ×`;
+    $('qB').style.width = `${Math.min(100, (x / 99) * 100)}%`;
+  });
+
+  bind(['fN', 'fM'], () => {
+    const N = +$('fN').value;
+    const m = +$('fM').value;
+    $('fNO').textContent = N;
+    $('fMO').textContent = m;
+    const out = N * (N - 1) * m;
+    $('fI').textContent = n(N * m);
+    $('fO').textContent = n(out);
+    $('fC').textContent = `${n(out * 12.7e-6 * 100, 1)} %`;
+  });
+})();
+</script>
+</body>
+</html>

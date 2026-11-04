@@ -94,7 +94,6 @@ const PROFILES = Object.fromEntries(
 
 function duration(p, quick) {
   const plan = { ...p.plan, ...(quick ? p.quick : {}) };
-  if (plan.mode === 'adaptive') return quick ? '15 a 30 min' : '30 a 60 min';
   // Con measureSec: llegada fija + 30 s de estabilización + medición (todas las pruebas duran lo mismo).
   const sec = plan.users.reduce((t, u) => t + (plan.measureSec ? ARRIVE_SEC + 30 + plan.measureSec : typeof u === 'number' ? plan.stepSec : u.sec), 0);
   return `${Math.round(sec / 60)} min`;
@@ -164,7 +163,6 @@ async function startTest(id, quick) {
   const t = active();
   const seed = t.seed();
   if (!seed) throw new Error('Faltan los datos de prueba: prepara el entorno primero');
-  profile.plan.max = Math.min(profile.plan.max ?? Infinity, seed.accounts.length);
 
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
   const file = `${stamp}_${t.env}_${id}${quick ? '-rapida' : ''}.ndjson`;
@@ -206,7 +204,7 @@ async function startTest(id, quick) {
         },
         write,
       );
-      log(outcome.maxGoodUsers != null ? `Terminó. Máximo con buen rendimiento: ${outcome.maxGoodUsers} usuarios` : `Terminó: ${outcome.passed}/${outcome.steps} pasan`);
+      log(`Terminó: ${outcome.passed}/${outcome.steps} pasan`);
     } catch (err) {
       log(`ERROR en la prueba: ${err.message}`);
     } finally {

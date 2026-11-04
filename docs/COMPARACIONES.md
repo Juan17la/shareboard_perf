@@ -1,5 +1,7 @@
 # Comparaciones: PC, contenedor y nube
 
+> **Modelo de carga anterior.** Estas cifras son de la campaña del 2 de noviembre (sesiones de 2 a 5 minutos, 95 % de logins, tableros que crecían sin límite y rampa con logins). Sirven como evidencia de los mecanismos, pero las capacidades no representan uso real. Se reemplazan al repetir la campaña con el [modelo actual](CARGAS.md): `node telemetry/campana.mjs`, luego `node telemetry/tablas.mjs`.
+
 Las cuatro opciones se evaluaron con **las mismas cargas, el mismo código, los mismos datos y las mismas métricas** ([MEDICIONES.md](MEDICIONES.md)). Este documento explica, prueba por prueba, por qué dan resultados distintos, y compara su costo.
 
 ---

@@ -1,6 +1,24 @@
-{ "id": "baja", "name": "Carga baja", "order": 2,
-  "question": "Entra 1 usuario por segundo y se queda ~2 min: 120 activos, 3.600 sesiones por hora. Un colegio o una facultad en su hora pico.",
-  "groups": [{ "type": "class", "count": 4, "size": 30 }, { "type": "team", "count": 22, "size": 5 }, { "type": "solo", "count": 20 }], "repeat": true,
-  "plan": { "mode": "steps", "users": [120], "sessionSec": 120, "measureSec": 600 },
-  "quick": { "measureSec": 180 },
-  "thresholds": { "restP95": 300, "loginP95": 1000, "fanoutP95": 150, "previewP95": 150, "pingP99": 100, "errorRate": 0.01 } }
+{
+  "id": "baja",
+  "name": "Carga baja",
+  "order": 2,
+  "question": "100 personas a la vez en la hora pico: una facultad o un colegio (unos 10.000 usuarios al mes).",
+  "plan": {
+    "mode": "steps",
+    "users": [
+      100
+    ],
+    "measureSec": 600
+  },
+  "quick": {
+    "measureSec": 180
+  },
+  "thresholds": {
+    "restP95": 300,
+    "loginP95": 1000,
+    "fanoutP95": 150,
+    "previewP95": 150,
+    "pingP99": 100,
+    "errorRate": 0.01
+  }
+}

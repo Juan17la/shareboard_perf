@@ -16,6 +16,7 @@
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="lab" aria-selected="true">Laboratorio</button>
       <button role="tab" data-tab="results" aria-selected="false">Resultados</button>
+      <a class="navlink" href="conceptos.html" target="_blank" rel="noopener">Conceptos</a>
     </nav>
   </header>
 
@@ -77,8 +78,8 @@
         <button class="btn" data-dl="raw" title="Todo lo registrado; se vuelve a abrir aquí con «Abrir archivo»">Datos crudos (.ndjson)</button>
       </div>
       <details class="card guide">
-        <summary>Cómo leer la telemetría</summary>
-        <p>Cada prueba mantiene un número fijo de <b>usuarios activos</b> mientras unos entran (login → listar → unirse al tablero) y otros salen, sin parar hasta que acaba el tiempo. Solo cuenta la <b>ventana medida</b> (banda verde o roja), después de la llegada y 30 s de estabilización.</p>
+        <summary>Cómo leer la telemetría <a href="conceptos.html" target="_blank" rel="noopener">· explicación completa con ejemplos</a></summary>
+        <p>Cada prueba mantiene un número fijo de <b>usuarios activos</b> repartidos en salas (personas solas, equipos, clases) que se abren y se cierran sin parar hasta que acaba el tiempo. Solo cuenta la <b>ventana medida</b> (banda verde o roja), después de la llegada y 30 s de estabilización.</p>
         <div class="table-wrap"><table>
           <thead><tr><th>Métrica</th><th>Qué mirar</th><th>Equivale a</th><th>Qué significa</th></tr></thead>
           <tbody>
@@ -97,7 +98,33 @@
         <span class="clock">00:00</span>
       </div>
       <div class="kpis"></div>
+      <div class="card waits-card">
+        <div class="card-h"><h3>¿Dónde está esperando la aplicación?</h3><span class="unit">ventana medida</span></div>
+        <p class="waits-verdict"></p>
+        <div class="table-wrap"><table class="waits"><thead><tr><th>Componente</th><th>Estado</th><th>Medición</th><th>Por qué importa</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="card ep-card" hidden>
+        <div class="card-h"><h3>Los 5 endpoints</h3><span class="unit">ventana medida</span></div>
+        <div class="table-wrap"><table class="ep-table"><thead><tr><th>Endpoint</th><th>Qué hace</th><th>Peticiones</th><th>Por s</th><th>Reparto</th><th>p50 ms</th><th>p95 ms</th><th>p99 ms</th><th>Errores</th></tr></thead><tbody></tbody></table></div>
+        <p class="hint ep-journeys"></p>
+      </div>
       <div class="grid charts"></div>
+      <div class="grid two">
+        <div class="card">
+          <div class="card-h"><h3>Curva de saturación <span class="unit">cada punto son 10 s</span></h3>
+            <select class="curve-y" aria-label="Latencia a graficar"><option value="ping">Ping p95</option><option value="rest">REST p95</option><option value="fanout">Trazo p95</option></select></div>
+          <div class="hint">Qué tan ocupado está el hilo de JavaScript frente a cuánto espera el usuario.</div>
+          <canvas class="curve"></canvas>
+          <div class="hint curve-empty muted">Aparece cuando hay datos del hilo y de latencia.</div>
+          <div class="hint read"><b>Cómo leerla:</b> los puntos forman una línea casi plana y luego un codo. A la derecha del codo, un poco más de trabajo multiplica la espera: eso es una cola, y ahí está el límite real de la máquina.</div>
+        </div>
+        <div class="card stab-card" hidden>
+          <div class="card-h"><h3>Inicio, mitad y final <span class="unit">tercios de la ventana</span></h3></div>
+          <div class="hint">Si la carga es constante, las primeras filas no cambian. Las de latencia dicen si el servidor se degrada con el tiempo.</div>
+          <div class="table-wrap"><table class="stab"><thead></thead><tbody></tbody></table></div>
+          <p class="hint read stab-verdict"></p>
+        </div>
+      </div>
       <div class="card heat-card">
         <div class="card-h"><h3>CPU por núcleo</h3><span class="hint heat-hint">Cada fila es un núcleo. Más oscuro = más ocupado.</span></div>
         <canvas class="heat"></canvas>

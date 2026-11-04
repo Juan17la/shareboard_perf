@@ -7,7 +7,7 @@ import { cpus } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { makeSeed, seedIsValid } from './seed.mjs';
+import { makeSeed, restoreBase, seedIsValid } from './seed.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 import { ROOT, SERVER } from './paths.mjs';
@@ -19,8 +19,8 @@ const COMPOSE = ['compose', '-f', join(ENVS, 'compose.yml')];
 const COMPOSE_C = [...COMPOSE, '-f', join(ENVS, 'compose.container.yml')];
 const MONGO_CONTAINER = 'shareboard-carga-mongo-1';
 const SERVER_CONTAINER = 'shareboard-carga-server-1';
-export const SEED_USERS = 6000; // la prueba Server killer mantiene 6.000 usuarios activos
-export const SERVER_PORT = 3000;
+export const SEED_USERS = 1500; // las sesiones ya emitidas se reparten en rotación entre las salas
+export const SERVER_PORT = Number(process.env.LAB_SERVER_PORT ?? 3000);
 export const AGENT_PORT = 7071;
 
 export const MODES = {
@@ -131,6 +131,7 @@ export function localTarget({ token, log, bind = '127.0.0.1' }) {
     SERVER_CPUS: String(MODES[mode]?.cpus ?? 1),
     SERVER_MEM: MODES[mode]?.mem ?? '512m',
     SERVER_DIR: SERVER,
+    SERVER_PORT: String(SERVER_PORT),
   });
 
   async function build() {
@@ -245,9 +246,32 @@ export function localTarget({ token, log, bind = '127.0.0.1' }) {
     const file = join(DATA, 'seed-local.json');
     seed = await seedIsValid(serverUrl, file, SEED_USERS);
     if (seed) return log(`Datos de prueba listos (${seed.accounts.length} cuentas)`);
-    log('No hay datos de prueba en esta base: se crean una sola vez (unos minutos)');
-    seed = await makeSeed(serverUrl, file, SEED_USERS, log);
+    log('No hay datos de prueba válidos: se crean una sola vez (unos minutos)');
+    const flow = JSON.parse(readFileSync(join(here, '../profiles/flujo.json'), 'utf8'));
+    seed = await withDb((db) => makeSeed({ target: serverUrl, file, users: SEED_USERS, log, db, flow }));
     log('Datos de prueba listos');
+  }
+
+  async function withDb(fn) {
+    const { MongoClient } = createRequire(join(SERVER, 'package.json'))('mongodb');
+    const client = new MongoClient('mongodb://127.0.0.1:27017');
+    try {
+      await client.connect();
+      return await fn(client.db('shareboard_carga'));
+    } finally {
+      await client.close().catch(() => {});
+    }
+  }
+
+  // Cada corrida arranca con los mismos tableros: se apaga el servidor, se restaura la copia base y se enciende.
+  async function restartClean() {
+    if (mode === 'native') await stopNative();
+    else await run('docker', [...COMPOSE_C, 'stop', 'server'], { env: composeEnv(), log });
+    if (seed) {
+      const n = await withDb((db) => restoreBase(db, seed.baseTs));
+      log(`Base restaurada (${n} tableros tocados por la corrida anterior)`);
+    }
+    await startServer();
   }
 
   return {
@@ -269,7 +293,7 @@ export function localTarget({ token, log, bind = '127.0.0.1' }) {
       await ensureSeed();
       log('Todo listo');
     },
-    restartServer: () => startServer(),
+    restartServer: restartClean,
     seed: () => seed,
     async status() {
       const ok = async (f) => {

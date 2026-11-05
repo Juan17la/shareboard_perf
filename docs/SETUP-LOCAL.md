@@ -115,7 +115,17 @@ Abre **http://localhost:7070**.
 1. **Entorno:** elige **PC (nativo)** y pulsa **Preparar**. El laboratorio compila el servidor si cambió, levanta MongoDB en Docker, arranca el servidor y el agente, y crea los datos de prueba (1.500 cuentas y 2.000 tableros con contenido, 1 o 2 minutos la primera vez). Los cuatro puntos se ponen en verde.
 2. **Reiniciar datos** antes de la primera prueba, para que la base sea igual en todos los entornos.
 3. **Pruebas:** pulsa **Correr** en Carga baja, media, alta y Server killer, en ese orden. Cada una dura 12,5 minutos. Antes de cada prueba el servidor se reinicia, así siempre arranca con la memoria limpia.
-4. **Resultados:** cada corrida queda en la lista. Clic en una para reproducirla.
+4. **Resultados:** cada corrida queda en la lista. Clic en una para ver el resultado completo; **▶** la repite desde el inicio.
+
+### Repetir una corrida
+
+La línea de tiempo marca la llegada y la ventana medida (verde si pasa, roja si no). Clic o arrastre para ir a cualquier segundo; la velocidad va de ½× a 120× y se puede cambiar mientras se reproduce.
+
+| Tecla | Acción |
+|---|---|
+| Espacio | Reproducir o pausar |
+| ← → | 10 s atrás o adelante (con Mayús, 1 s) |
+| Inicio / Fin | Ir al inicio o al final |
 
 ### Guardar los resultados en tu equipo
 

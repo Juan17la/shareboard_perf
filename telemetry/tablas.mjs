@@ -7,6 +7,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { crashState } from './lib/comparar.mjs';
+
 const dir = resolve(process.argv[2] ?? new URL('../resultados', import.meta.url).pathname);
 const ENVS = [['pc', 'PC nativo'], ['docker-1cpu', 'Contenedor 1 CPU'], ['docker-2cpu', 'Contenedor 2 CPU'], ['aws', 'AWS t3.small']];
 const TESTS = [['baja', 'Baja'], ['media', 'Media'], ['alta', 'Alta'], ['capacidad-1000', '1.000'], ['capacidad-2000', '2.000'], ['capacidad-3000', '3.000'], ['server-killer', 'Server killer']];
@@ -38,10 +40,7 @@ function loadRun(env, file) {
     return v.length ? { avg: v.reduce((a, b) => a + b, 0) / v.length, max: Math.max(...v) } : null;
   };
   const n = loads.length || 1;
-  // Sin proceso servidor en la ventana, los percentiles son conexiones rechazadas: no son latencia.
-  // Una corrida cortada por memoria también cuenta: el contenedor muere en el segundo siguiente.
-  const downPct = agents.length ? (agents.filter((s) => !s.server).length / agents.length) * 100 : 0;
-  const crashed = downPct > 5 || step.reasons.some((x) => x.startsWith('memoria del contenedor'));
+  const { downPct, crashed } = crashState(step, agents);
   return {
     file,
     step,

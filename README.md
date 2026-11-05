@@ -40,7 +40,7 @@ cd shareboard_perf
 node telemetry/lab.mjs          # abre http://localhost:7070
 ```
 
-Elige el entorno, pulsa **Preparar** y corre las pruebas. La pestaña **Conceptos** explica cada gráfica con ejemplos. Los resultados se descargan desde la misma página (CSV y NDJSON).
+Elige el entorno, pulsa **Preparar** y corre las pruebas. La pestaña **Conceptos** explica cada gráfica con ejemplos. Los resultados se descargan desde la misma página (CSV y NDJSON). **Comparar** pone los entornos lado a lado, en barras, pasteles y líneas, por carga o a través de todas.
 
 ## Licencia
 

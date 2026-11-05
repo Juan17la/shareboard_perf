@@ -218,6 +218,8 @@ scp -i $HOME\.ssh\shareboard-perf-key.pem "ubuntu@<IP pública del generador>:sh
 
 Luego, en tu laboratorio local, **Resultados → Abrir archivo** para verlos con las mismas gráficas.
 
+Para compararlos con el PC y Docker, abre **Comparar → Añadir resultados de AWS** y elige los `.ndjson` (no los `.csv`). Cada archivo entra en su carga y queda guardado en `resultados/2026-11-04/aws/`, donde también lo lee `tablas.mjs`. Solo se aceptan corridas completas de 600 s con el modelo de carga actual.
+
 ---
 
 ## 9. Apagar todo

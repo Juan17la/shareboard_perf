@@ -87,6 +87,9 @@
     const isNew = () => R.some((r) => r.load?.rooms);
 
     const secOf = (ts) => Math.max(0, Math.round((ts - S.t0) / 1000));
+    const windowFrom = (st) => secOf(st.measureFrom ?? st.end - st.measuredSec * 1000);
+    // Último escalón ya terminado en ese momento: al repetir no se adelantan sus resultados.
+    const doneBy = (end) => S.steps.filter((x) => end >= S.maxSec || secOf(x.end) <= end).at(-1);
     const thr = () => S.meta?.profile?.thresholds ?? {};
     const base = () => S.meta?.baseRttMs ?? 0;
 
@@ -326,13 +329,14 @@
       drawCurve(end);
       waits(end);
       endpoints(end);
-      thirds();
-      drawBands();
+      thirds(end);
+      drawBands(end);
       kpis(end);
       steps(end);
       info();
       q('.seek').max = String(S.maxSec);
       q('.seek').value = String(end);
+      q('.seek').setAttribute('aria-valuetext', mmss(end));
       q('.clock').textContent = live ? mmss(end) : `${mmss(end)} / ${mmss(S.maxSec)}`;
     }
 
@@ -426,11 +430,15 @@
 
     // Dónde espera la aplicación: se calcula de la ventana medida (o de los últimos 60 s en vivo).
     function waits(end) {
-      const st = S.steps.filter((x) => secOf(x.start) <= end).at(-1);
-      const from = st ? secOf(st.end - st.measuredSec * 1000) : Math.max(0, end - 60);
+      const st = S.steps.filter((x) => windowFrom(x) <= end).at(-1);
+      const from = st ? windowFrom(st) : Math.max(0, end - 60);
       const to = st ? Math.min(end, secOf(st.end)) : end;
       const win = R.slice(from, to + 1).map((r) => r.agent).filter(Boolean);
-      if (!win.length) return;
+      if (!win.length) {
+        q('.waits-verdict').textContent = 'Todavía no hay muestras en este momento de la prueba.';
+        q('.waits tbody').innerHTML = '';
+        return;
+      }
       const mean = (f) => avg(win.map(f));
       const peak = (f) => { const v = win.map(f).filter((x) => x != null && Number.isFinite(x)); return v.length ? Math.max(...v) : null; };
       const js = mean((a) => a.server?.threads?.main);
@@ -468,7 +476,7 @@
     }
 
     function endpoints(end) {
-      const st = S.steps.filter((x) => secOf(x.start) <= end).at(-1);
+      const st = doneBy(end);
       if (!st?.lat) { q('.ep-card').hidden = true; return; }
       q('.ep-card').hidden = false;
       const total = Object.keys(ENDPOINTS).reduce((t, k) => t + (st.byOp?.[k]?.attempts ?? st.lat[k]?.n ?? 0), 0) || 1;
@@ -490,8 +498,8 @@
       q('.ep-journeys').innerHTML = jt ? `Cómo llegaron ${fmt(jt, 0)} personas: ${Object.entries(JOURNEYS).map(([k, n]) => `${n} <b>${fmt(((j[k] ?? 0) / jt) * 100, 0)} %</b>`).join(' · ')}. Se rindieron: <b>${fmt(st.gaveUp ?? 0, 0)}</b>.${(st.notes ?? []).length ? ` <span class="muted">${esc(st.notes.join(' · '))}</span>` : ''}` : '';
     }
 
-    function thirds() {
-      const st = S.steps.at(-1)?.stability;
+    function thirds(end) {
+      const st = doneBy(end)?.stability;
       const card = q('.stab-card');
       card.hidden = !st;
       if (!st) return;
@@ -502,31 +510,52 @@
       q('.stab-verdict').innerHTML = `El trabajo cambió <b>${fmt(st.workDriftPct, 1)} %</b> y los usuarios <b>${fmt(st.usersDriftPct, 1)} %</b> entre el inicio y el final. ${Math.abs(st.workDriftPct ?? 0) <= 15 ? 'Se puede considerar constante: lo que cambie en latencia se debe al servidor.' : 'No es constante: las salas grandes abiertas en ese momento cambiaron la carga, interpreta la latencia con cuidado.'}`;
     }
 
-    function drawBands() {
+    // Línea de tiempo: fases de cada escalón, lo ya reproducido y las marcas de tiempo.
+    function drawBands(end) {
       const cv = q('.bands');
       const w = cv.clientWidth;
       if (!w) return;
+      const BAR = 24;
       cv.width = w * devicePixelRatio;
-      cv.height = 24 * devicePixelRatio;
+      cv.height = 38 * devicePixelRatio;
       const ctx = cv.getContext('2d');
       ctx.scale(devicePixelRatio, devicePixelRatio);
       const total = Math.max(1, S.maxSec);
-      ctx.font = '10px system-ui';
+      const xOf = (s) => (s / total) * w;
+      ctx.font = '11px system-ui';
       ctx.textBaseline = 'middle';
+      ctx.fillStyle = css('--grid');
+      ctx.fillRect(0, 0, w, BAR);
+      const band = (a, b, color, label) => {
+        ctx.fillStyle = css(color);
+        ctx.fillRect(xOf(a), 0, xOf(b) - xOf(a) - 1, BAR);
+        if (ctx.measureText(label).width + 12 > xOf(b) - xOf(a)) return;
+        ctx.fillStyle = css('--text-2');
+        ctx.fillText(label, xOf(a) + 6, BAR / 2);
+      };
       for (const st of S.steps) {
-        const x = (secOf(st.start) / total) * w;
-        const bw = ((secOf(st.end) - secOf(st.start)) / total) * w;
-        ctx.fillStyle = css(st.pass ? '--band-pass' : '--band-fail');
-        ctx.fillRect(x, 0, bw - 1, 24);
-        if (bw > 26) {
-          ctx.fillStyle = css('--text-2');
-          ctx.fillText(String(st.users), x + 4, 12);
-        }
+        const from = windowFrom(st);
+        band(secOf(st.start), from, '--band-other', 'Llegada');
+        band(from, secOf(st.end), st.invalid ? '--band-other' : st.pass ? '--band-pass' : '--band-fail', `Ventana medida · ${fmt(st.users, 0)} usuarios`);
+      }
+      ctx.fillStyle = css('--accent');
+      ctx.fillRect(0, BAR - 3, xOf(end), 3);
+      const every = [10, 30, 60, 120, 300, 600, 1800].find((s) => xOf(s) >= 64) ?? 3600;
+      ctx.fillStyle = css('--muted');
+      ctx.textBaseline = 'alphabetic';
+      for (let s = 0; s <= total; s += every) {
+        const x = xOf(s);
+        ctx.fillRect(x, BAR, 1, 3);
+        ctx.textAlign = x < 16 ? 'left' : x > w - 16 ? 'right' : 'center';
+        ctx.fillText(mmss(s), x, 37);
       }
     }
 
     function kpis(end) {
-      const win = R.slice(Math.max(0, end - 4), end + 1);
+      // Al terminar, el generador cierra las conexiones: esos últimos segundos no son la carga medida.
+      const last = S.steps.at(-1);
+      const to = last ? Math.min(end, secOf(last.end) - 3) : end;
+      const win = R.slice(Math.max(0, to - 4), to + 1);
       const mean = (f) => avg(win.map(f));
       const t = thr();
       const b = base();
@@ -557,7 +586,7 @@
       const tb = q('.steps tbody');
       tb.innerHTML = S.steps
         .map((s, i) => {
-          const a = secOf(s.start);
+          const a = windowFrom(s);
           const cur = end >= a && end <= secOf(s.end);
           const tag = s.invalid ? '<span class="tag neutral">no válido</span>' : s.pass ? '<span class="tag pass">✓ pasa</span>' : '<span class="tag fail">✕ no pasa</span>';
           const x = s.res ?? {};
@@ -647,12 +676,41 @@
       pos = Math.max(0, Math.min(sec, S.maxSec));
       draw();
     }
+    function setPlaying(on) {
+      playing = on;
+      q('.play').textContent = on ? '❚❚' : '▶';
+      q('.play').setAttribute('aria-label', on ? 'Pausar' : 'Reproducir');
+    }
+    function toggle() {
+      if (!playing && pos >= S.maxSec) pos = 0;
+      setPlaying(!playing);
+    }
     q('.seek').addEventListener('input', (e) => seek(Number(e.target.value)));
-    q('.play').addEventListener('click', () => {
-      if (pos >= S.maxSec) pos = 0;
-      playing = !playing;
-      q('.play').textContent = playing ? '❚❚' : '▶';
+    q('.play').addEventListener('click', toggle);
+    q('.restart').addEventListener('click', () => seek(0));
+    q('.back').addEventListener('click', () => seek(pos - 10));
+    q('.fwd').addEventListener('click', () => seek(pos + 10));
+    const timeline = q('.timeline');
+    const tip = q('.tip');
+    timeline.addEventListener('pointermove', (e) => {
+      const r = timeline.getBoundingClientRect();
+      const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      tip.textContent = mmss(f * S.maxSec);
+      tip.style.left = `${f * 100}%`;
+      tip.hidden = false;
     });
+    timeline.addEventListener('pointerleave', () => { tip.hidden = true; });
+    const listeners = new AbortController();
+    if (!live) document.addEventListener('keydown', (e) => {
+      const el = e.target;
+      if (e.ctrlKey || e.metaKey || e.altKey || root.closest('[hidden]') || el.closest?.('select, summary, a, input:not(.seek)')) return;
+      if (e.key === ' ' && el.closest?.('button')) return; // el botón ya responde a Espacio
+      const jump = e.shiftKey ? 1 : 10;
+      const keys = { ' ': toggle, ArrowLeft: () => seek(pos - jump), ArrowRight: () => seek(pos + jump), Home: () => seek(0), End: () => seek(S.maxSec) };
+      if (!keys[e.key]) return;
+      e.preventDefault();
+      keys[e.key]();
+    }, { signal: listeners.signal });
     let last = performance.now();
     let alive = true;
     (function frame(now) {
@@ -661,7 +719,7 @@
       last = now;
       if (playing) {
         pos += dt * Number(q('.speed').value);
-        if (pos >= S.maxSec) { pos = S.maxSec; playing = false; q('.play').textContent = '▶'; }
+        if (pos >= S.maxSec) { pos = S.maxSec; setPlaying(false); }
       }
       if (S.t0 != null && (playing || (live && S.dirty))) draw(live);
       requestAnimationFrame(frame);
@@ -670,7 +728,7 @@
     addEventListener('resize', () => {
       for (const def of plots) def.plot.setSize({ width: def.box.clientWidth, height: 190 });
       draw(true);
-    });
+    }, { signal: listeners.signal });
 
     return {
       ingest,
@@ -680,10 +738,11 @@
           try { ingest(JSON.parse(line), line); } catch {}
         }
         if (S.t0 == null) return false;
+        pos = S.maxSec; // abre con el resultado completo; «Reproducir» lo repite desde el inicio
         draw(true);
         return true;
       },
-      destroy() { alive = false; },
+      destroy() { alive = false; listeners.abort(); },
     };
   }
 
@@ -708,6 +767,7 @@
     replay?.destroy();
     replay = Dashboard($('replay'), { live: false });
     if (!replay.loadText(text)) alert('El archivo no tiene datos de telemetría.');
+    $('replay').scrollIntoView();
   }
   $('file').addEventListener('change', async (e) => {
     const f = e.target.files[0];

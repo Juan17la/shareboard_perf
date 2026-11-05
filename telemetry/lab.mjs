@@ -17,6 +17,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import { loadRuns, removeAws, saveAws } from './lib/comparar.mjs';
 import { ARRIVE_SEC, runTest } from './lib/runner.mjs';
 import { CORES, DATA, MODES, coreLayout, freePort, localTarget, SERVER_PORT, AGENT_PORT } from './lib/target.mjs';
 
@@ -220,6 +221,7 @@ async function startTest(id, quick) {
 
 // ---------- HTTP ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const MAX_UPLOAD = 64 * 2 ** 20;
 const json = (res, code, body) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 const body = (req) => new Promise((r) => {
   let s = '';
@@ -327,6 +329,30 @@ async function handle(req, res) {
     if (!existsSync(file)) return json(res, 404, { error: 'no existe' });
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });
     return createReadStream(file).pipe(res);
+  }
+  if (p === '/api/comparar') return json(res, 200, { runs: await loadRuns() });
+  if (p === '/api/comparar/aws' && req.method === 'POST') {
+    // Este tipo obliga al navegador a preguntar antes: otra página abierta no puede escribir aquí.
+    if (req.headers['content-type'] !== 'application/x-ndjson') return json(res, 415, { error: 'Se espera un archivo .ndjson' });
+    let text = '';
+    req.setEncoding('utf8');
+    for await (const chunk of req) {
+      text += chunk;
+      if (text.length > MAX_UPLOAD) return json(res, 413, { error: 'El archivo es demasiado grande' });
+    }
+    try {
+      return json(res, 201, saveAws(text, url.searchParams.get('test')));
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
+  }
+  if (p.startsWith('/api/comparar/aws/') && req.method === 'DELETE') {
+    try {
+      removeAws(basename(p));
+      return json(res, 200, { ok: true });
+    } catch (err) {
+      return json(res, 400, { error: err.message });
+    }
   }
   const file = resolve(here, 'ui', '.' + (p === '/' ? '/index.html' : p));
   if (!file.startsWith(resolve(here, 'ui')) || !existsSync(file) || statSync(file).isDirectory()) return json(res, 404, { error: 'no existe' });

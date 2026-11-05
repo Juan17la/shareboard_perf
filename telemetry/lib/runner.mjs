@@ -341,6 +341,9 @@ export async function runTest(opts, write) {
     if (!restTried && !lat.ping && n > 0) reasons.push('ninguna operación completada');
     const invalid = genElu != null && genElu > 0.85;
     if (invalid) reasons.push('generador saturado: no válido');
+    // Con el servidor caído, los percentiles son conexiones rechazadas al instante: no son latencia.
+    const serverDownPct = aw.length ? round((aw.filter((s) => !s.server).length / aw.length) * 100, 0) : 0;
+    if (serverDownPct > 5) reasons.unshift(`servidor caído ${serverDownPct} % de la ventana`);
 
     // ¿El trabajo fue constante? Primer tercio de la ventana contra el último.
     const thirds = [0, 1, 2].map((i) => {
@@ -366,7 +369,7 @@ export async function runTest(opts, write) {
     const stability = { thirds, workDriftPct: drift('msgsOut'), usersDriftPct: drift('users') };
     if (Math.abs(stability.usersDriftPct ?? 0) > 10) notes.push(`usuarios variaron ${stability.usersDriftPct} % dentro de la ventana`);
 
-    return { users: n, kind, measuredSec: secs, pass: reasons.length === 0, invalid, reasons, notes, lat, srv, errorRate: round(errorRate * 100, 2), wsErrors, byOp, journeys, entered, gaveUp, errors: errByCode, stability, throughput: win.length ? round(win.reduce((s, r) => s + r.rps, 0) / win.length) : 0, res, genElu };
+    return { users: n, kind, measuredSec: secs, pass: reasons.length === 0, invalid, reasons, notes, lat, srv, errorRate: round(errorRate * 100, 2), serverDownPct, wsErrors, byOp, journeys, entered, gaveUp, errors: errByCode, stability, throughput: win.length ? round(win.reduce((s, r) => s + r.rps, 0) / win.length) : 0, res, genElu };
   }
 
   // ---------- plan ----------

@@ -1,0 +1,24 @@
+{
+  "id": "capacidad-3000",
+  "name": "Capacidad 3.000",
+  "order": 4.3,
+  "question": "¿Dónde deja de alcanzar? 3.000 personas a la vez.",
+  "plan": {
+    "mode": "steps",
+    "users": [
+      3000
+    ],
+    "measureSec": 600
+  },
+  "quick": {
+    "measureSec": 180
+  },
+  "thresholds": {
+    "restP95": 300,
+    "loginP95": 1000,
+    "fanoutP95": 150,
+    "previewP95": 150,
+    "pingP99": 100,
+    "errorRate": 0.01
+  }
+}

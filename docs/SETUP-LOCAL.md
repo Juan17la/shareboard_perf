@@ -75,11 +75,11 @@ Advertencia para el informe: en WSL2 la máquina medida es la máquina virtual d
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 source ~/.nvm/nvm.sh
-nvm install 22
+nvm install 24
 node --version   # v22.x
 ```
 
-No hace falta cambiar la versión por defecto: el laboratorio busca Node 22 en `~/.nvm` y se relanza solo con ella.
+No hace falta cambiar la versión por defecto: el laboratorio busca Node 24 en `~/.nvm` y se relanza solo con ella.
 
 ### 2.5 Límite de archivos abiertos
 
@@ -164,7 +164,7 @@ Abre **Registro** en la página: ahí aparece el paso exacto y el error.
 
 | Mensaje | Qué hacer |
 |---|---|
-| `Se necesita Node 22 o más nuevo` | `nvm install 22` |
+| `Se necesita Node 22 o más nuevo` | `nvm install 24` |
 | `docker … permission denied` | `sudo usermod -aG docker $USER` y vuelve a iniciar sesión |
 | `El puerto X lo usa un proceso de otro usuario` | `sudo fuser -k X/tcp` y vuelve a **Preparar** |
 | `El servidor no respondió` | Revisa `envs/logs/server.log` |

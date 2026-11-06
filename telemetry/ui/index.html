@@ -32,6 +32,7 @@
             <input id="r-host" placeholder="IP de la instancia" autocomplete="off">
             <input id="r-token" placeholder="Token" autocomplete="off">
           </div>
+          <label id="workers-field" class="field-inline" title="Uno por núcleo físico como máximo. En una t3.small o un contenedor de 1 CPU, deja 1.">Procesos de Node <input id="workers" type="number" min="1" max="16" value="1"></label>
           <div class="row">
             <button id="prepare" class="btn primary">Preparar</button>
             <button id="reset" class="btn ghost" title="Borra la base de pruebas y la vuelve a crear">Reiniciar datos</button>

@@ -27,27 +27,31 @@ const { values: args } = parseArgs({
     port: { type: 'string', default: '7070' },
     'target-only': { type: 'boolean', default: false },
     mode: { type: 'string', default: 'native' },
+    workers: { type: 'string', default: '1' }, // con --target-only: procesos de Node del servidor
     token: { type: 'string' },
   },
 });
 const targetOnly = args['target-only'];
 
-// ---------- arranque: Node 22, límite de archivos abiertos y núcleos del generador ----------
+// ---------- arranque: Node reciente, límite de archivos abiertos y núcleos del generador ----------
 // Se relanza a sí mismo una vez con todo eso resuelto (así no depende de cómo esté tu terminal).
 if (!process.env.LAB_CHILD) {
   let node = process.execPath;
-  if (Number(process.versions.node.split('.')[0]) < 22) {
+  // Node 24.7 trae Argon2id, el hash que usa el servidor para las contraseñas. Con Node 22 corre, pero usa scrypt.
+  const parts = (v) => v.replace(/^v/, '').split('.').map(Number);
+  const recent = (v) => parts(v)[0] > 24 || (parts(v)[0] === 24 && parts(v)[1] >= 7);
+  if (!recent(process.version)) {
     const dir = join(homedir(), '.nvm/versions/node');
-    // Prefiere la 22 (la misma que se instala en EC2); si no hay, la más nueva.
-    const major = (v) => Number(v.slice(1).split('.')[0]);
-    const found = existsSync(dir) ? readdirSync(dir).filter((v) => major(v) >= 22).sort((a, b) => (major(a) === 22 ? -1 : major(b) === 22 ? 1 : major(b) - major(a))) : [];
-    const v22 = found[0];
-    if (!v22) {
-      console.error(`Se necesita Node 22 o más nuevo (tienes ${process.version}). Instálalo con: nvm install 22`);
+    const found = existsSync(dir) ? readdirSync(dir).filter(recent).sort((a, b) => parts(b)[0] - parts(a)[0] || parts(b)[1] - parts(a)[1]) : [];
+    if (found[0]) {
+      node = join(dir, found[0], 'bin/node');
+      console.log(`Usando ${node} (tu terminal tenía ${process.version})`);
+    } else if (parts(process.version)[0] < 22) {
+      console.error(`Se necesita Node 22 o más nuevo (tienes ${process.version}). Instálalo con: nvm install 24`);
       process.exit(1);
+    } else {
+      console.log(`Node ${process.version}: los logins usarán scrypt. Para medir Argon2id, instala Node 24: nvm install 24`);
     }
-    node = join(dir, v22, 'bin/node');
-    console.log(`Usando ${node} (tu terminal tenía ${process.version})`);
   }
   const cores = coreLayout();
   const pin = cores && !targetOnly ? ['taskset', '-c', cores.gen.join(',')] : [];
@@ -115,7 +119,9 @@ function active() {
     const h = state.remote.host.split(':')[0];
     return { env: `nube-${h}`, serverUrl: `http://${h}:${SERVER_PORT}`, agentUrl: `http://${h}:${AGENT_PORT}`, token: state.remote.token, seed: () => remoteSeed, restart: () => remoteCall('/api/target/restart', { method: 'POST', timeout: 120_000 }) };
   }
-  return { env: MODES[state.mode].env, serverUrl: local.serverUrl, agentUrl: local.agentUrl, token, seed: local.seed, restart: local.restartServer };
+  // Las corridas con varios procesos no deben confundirse con las de uno solo.
+  const suffix = local.workers > 1 ? `-${local.workers}w` : '';
+  return { env: MODES[state.mode].env + suffix, serverUrl: local.serverUrl, agentUrl: local.agentUrl, token, seed: local.seed, restart: local.restartServer };
 }
 
 async function refreshStatus() {
@@ -129,7 +135,7 @@ async function refreshStatus() {
 }
 setInterval(() => !state.busy && refreshStatus(), 4000).unref();
 
-async function prepare(mode, remote) {
+async function prepare(mode, remote, workers = local.workers) {
   state.busy = 'preparing';
   state.ready = false;
   state.error = null;
@@ -144,7 +150,7 @@ async function prepare(mode, remote) {
       remoteSeed = await remoteCall('/api/target/seed', { timeout: 60_000 });
       log(`Remoto listo: ${st.label}, ${remoteSeed.accounts.length} cuentas de prueba`);
     } else {
-      await local.prepare(mode);
+      await local.prepare(mode, workers);
     }
     state.ready = true;
   } catch (err) {
@@ -275,7 +281,8 @@ async function handle(req, res) {
     const b = await body(req);
     if (b.mode === 'remote' && (!b.host || !b.token)) return json(res, 400, { error: 'Falta la IP y el token del remoto' });
     if (b.mode !== 'remote' && !MODES[b.mode]) return json(res, 400, { error: 'Modo desconocido' });
-    prepare(b.mode, b.mode === 'remote' ? { host: b.host.trim(), token: b.token.trim() } : null);
+    const workers = Math.min(16, Math.max(1, Math.floor(Number(b.workers)) || 1));
+    prepare(b.mode, b.mode === 'remote' ? { host: b.host.trim(), token: b.token.trim() } : null, workers);
     return json(res, 202, { ok: true });
   }
   if (p === '/api/reset' && req.method === 'POST') {
@@ -341,14 +348,14 @@ async function handle(req, res) {
       if (text.length > MAX_UPLOAD) return json(res, 413, { error: 'El archivo es demasiado grande' });
     }
     try {
-      return json(res, 201, saveAws(text, url.searchParams.get('test')));
+      return json(res, 201, saveAws(text, url.searchParams.get('test'), url.searchParams.get('env')));
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
   }
   if (p.startsWith('/api/comparar/aws/') && req.method === 'DELETE') {
     try {
-      removeAws(basename(p));
+      removeAws(basename(p), url.searchParams.get('env'));
       return json(res, 200, { ok: true });
     } catch (err) {
       return json(res, 400, { error: err.message });
@@ -382,7 +389,7 @@ server.listen(Number(args.port), host, async () => {
     writeFileSync(join(DATA, 'token.txt'), token + '\n');
     log(`Laboratorio remoto en :${args.port}. Token: ${token}  (guardado en data/token.txt)`);
     log('El generador debe alcanzar los puertos 3000, 7070 y 7071 de esta máquina (mismo security group).');
-    await prepare(args.mode);
+    await prepare(args.mode, null, Math.max(1, Math.floor(Number(args.workers)) || 1));
     if (state.ready) log(`Listo. En el PC elige "Nube", pon esta IP y el token ${token}`);
   } else {
     log(`Laboratorio listo: http://localhost:${args.port}/`);

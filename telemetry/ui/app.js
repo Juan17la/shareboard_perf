@@ -826,6 +826,8 @@
     const modes = { ...config.modes, remote: 'Nube (EC2)' };
     $('modes').innerHTML = Object.entries(modes).map(([k, v]) => `<button data-mode="${k}" aria-pressed="${k === selMode}">${v}</button>`).join('');
     $('remote-fields').hidden = selMode !== 'remote';
+    // En la nube se fija al preparar el servidor: WORKERS=n en setup/ec2-preparar.sh.
+    $('workers-field').hidden = selMode === 'remote';
   }
   $('modes').addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]');
@@ -836,12 +838,14 @@
   });
   $('r-host').value = localStorage.getItem('lab.host') ?? '';
   $('r-token').value = localStorage.getItem('lab.token') ?? '';
+  $('workers').value = localStorage.getItem('lab.workers') ?? '1';
   $('prepare').onclick = () => {
     const host = $('r-host').value.trim();
     const token = $('r-token').value.trim();
     localStorage.setItem('lab.host', host);
     localStorage.setItem('lab.token', token);
-    post('api/prepare', { mode: selMode, host, token });
+    localStorage.setItem('lab.workers', $('workers').value);
+    post('api/prepare', { mode: selMode, host, token, workers: Number($('workers').value) });
   };
   $('reset').onclick = () => confirm('¿Borrar la base de datos de pruebas y crearla de nuevo? Las corridas guardadas no se tocan.') && post('api/reset');
   $('quick').checked = localStorage.getItem('lab.quick') === '1';

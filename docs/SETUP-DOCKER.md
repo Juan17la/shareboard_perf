@@ -20,7 +20,7 @@ Los límites están en `envs/compose.container.yml`.
 
 ## 1. Requisitos
 
-Los mismos del [entorno local](SETUP-LOCAL.md#1-requisitos): Linux (o WSL2), Git, Node 22 y Docker con Compose v2. Además, Docker debe usar **cgroups v2** (por defecto desde Debian 11, Ubuntu 21.10 y Arch desde 2021):
+Los mismos del [entorno local](SETUP-LOCAL.md#1-requisitos): Linux (o WSL2), Git, Node 24 y Docker con Compose v2. Además, Docker debe usar **cgroups v2** (por defecto desde Debian 11, Ubuntu 21.10 y Arch desde 2021):
 
 ```bash
 docker info --format '{{.CgroupVersion}}'   # debe responder 2
@@ -61,11 +61,11 @@ docker run --rm hello-world
 
 En Docker Desktop los contenedores corren dentro de la máquina virtual de WSL2. Los límites `cpus` y `mem_limit` funcionan igual, pero se aplican sobre los recursos que Docker Desktop le dio a esa máquina virtual (*Settings → Resources*). Anótalos en el informe.
 
-### 2.4 Node 22 y código
+### 2.4 Node 24 y código
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source ~/.nvm/nvm.sh && nvm install 22
+source ~/.nvm/nvm.sh && nvm install 24
 git clone https://github.com/Juan17la/shareboard_perf.git
 cd shareboard_perf
 ```
@@ -80,7 +80,7 @@ node telemetry/lab.mjs
 
 En **http://localhost:7070**:
 
-1. Elige **Contenedor 1 CPU · 512 MB** (o **2 CPU**) y pulsa **Preparar**. El laboratorio compila el servidor, construye la imagen (`node:22-slim` + `dist/`), levanta MongoDB y el servidor con sus límites, y crea los datos de prueba.
+1. Elige **Contenedor 1 CPU · 512 MB** (o **2 CPU**) y pulsa **Preparar**. El laboratorio compila el servidor, construye la imagen (`node:24-slim` + `dist/`), levanta MongoDB y el servidor con sus límites, y crea los datos de prueba.
 2. **Reiniciar datos**: deja la base igual que en los demás entornos.
 3. Corre **Carga baja, media, alta y Server killer**. Cada una dura 12,5 minutos.
 

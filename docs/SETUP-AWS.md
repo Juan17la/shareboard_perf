@@ -16,10 +16,12 @@ Tu PC solo sirve para entrar por SSH y ver la interfaz por un túnel.
 
 | Rol | Tipo | CPU | RAM | Disco | Precio On-Demand (us-east-1) |
 |---|---|---|---|---|---|
-| Servidor | **t3.small** | 2 vCPU, Intel Xeon Platinum 8175M a 2,5 GHz (1 núcleo físico con 2 hilos) | 2 GB | EBS gp3 20 GiB | USD 0,0208/h |
+| Servidor | **t3.small** | 2 vCPU, Intel Xeon a 2,5 GHz (8175M o 8259CL según el host; 1 núcleo físico con 2 hilos) | 2 GB | EBS gp3 20 GiB | USD 0,0208/h |
 | Generador | t3.micro | 2 vCPU, misma familia | 1 GB (+2 GB de swap) | EBS gp3 8 GiB | USD 0,0104/h |
 
-Sistema: Ubuntu Server LTS (la medición se hizo con Ubuntu 26.04.1, kernel 7.0.0-1014-aws), región us-east-1, modo de créditos de CPU **Unlimited**.
+Sistema: Ubuntu Server LTS (la medición se hizo con Ubuntu 26.04.1, kernel 7.0.0-1014-aws), región us-east-1, modo de créditos de CPU **Unlimited** y, para comparar, **Standard** (Limited).
+
+Para cambiar de modo sin apagar la instancia, porque al apagarla cambia la IP pública: **Actions → Instance settings → Change credit specification**. Cambia solo el servidor y deja el generador en Unlimited: si se queda sin créditos, invalidaría las corridas. Anota antes el `CPUCreditBalance` (pestaña **Monitoring**), porque de él depende cuándo empieza el recorte.
 
 ---
 
@@ -121,7 +123,7 @@ Dentro de la instancia, un solo comando:
 curl -fsSL https://raw.githubusercontent.com/Juan17la/shareboard_perf/main/setup/ec2-preparar.sh | bash -s servidor
 ```
 
-El script instala `git`, `tmux`, Docker y Node 22 (con nvm), sube el límite de archivos abiertos a 65.535, agrega 2 GB de swap si la instancia tiene menos de 1,5 GB de RAM, clona el repositorio en `~/shareboard_perf` y arranca el laboratorio en modo `--target-only` dentro de `tmux`.
+El script instala `git`, `tmux`, Docker y Node 24 (con nvm), sube el límite de archivos abiertos a 65.535, agrega 2 GB de swap si la instancia tiene menos de 1,5 GB de RAM, clona el repositorio en `~/shareboard_perf` y arranca el laboratorio en modo `--target-only` dentro de `tmux`.
 
 El laboratorio levanta MongoDB en Docker, compila y arranca el servidor y el agente, y crea los datos de prueba: 1.500 cuentas y 2.000 tableros. **En una t3.small esto tarda ~10 minutos**: cada registro calcula scrypt, y la instancia hace unos 3 por segundo. Al final imprime la **IP privada** y el **token**.
 
@@ -134,7 +136,7 @@ sudo apt-get install -y git tmux curl docker.io docker-compose-v2
 sudo usermod -aG docker $USER && newgrp docker
 printf '* soft nofile 65535\n* hard nofile 65535\n' | sudo tee /etc/security/limits.d/90-carga.conf
 curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source ~/.nvm/nvm.sh && nvm install 22
+source ~/.nvm/nvm.sh && nvm install 24
 git clone https://github.com/Juan17la/shareboard_perf.git ~/shareboard_perf
 cd ~/shareboard_perf/servidor && npm ci && npm run build && cd ..
 tmux new -s lab 'ulimit -n 65535; node telemetry/lab.mjs --target-only 2>&1 | tee ~/lab.log'
@@ -218,7 +220,7 @@ scp -i $HOME\.ssh\shareboard-perf-key.pem "ubuntu@<IP pública del generador>:sh
 
 Luego, en tu laboratorio local, **Resultados → Abrir archivo** para verlos con las mismas gráficas.
 
-Para compararlos con el PC y Docker, abre **Comparar → Añadir resultados de AWS** y elige los `.ndjson` (no los `.csv`). Cada archivo entra en su carga y queda guardado en `resultados/2026-11-04/aws/`, donde también lo lee `tablas.mjs`. Solo se aceptan corridas completas de 600 s con el modelo de carga actual.
+Para compararlos con el PC y Docker, abre **Comparar** y pulsa **Añadir a AWS Unlimited** o **Añadir a AWS Limited**, según el modo con el que se midieron, y elige los `.ndjson` (no los `.csv`). Cada archivo entra en su carga y queda guardado junto a las corridas de ese modo en `resultados/2026-11-05/`, donde también lo lee `tablas.mjs`. Solo se aceptan corridas completas de 600 s con el modelo de carga actual, y desde la página solo se pueden quitar las que se añadieron así.
 
 ---
 

@@ -14,6 +14,7 @@ const { values: args, positionals } = parseArgs({
   options: {
     envs: { type: 'string', default: 'native,docker1,docker2' },
     tests: { type: 'string', default: 'baja,media,alta,server-killer' },
+    workers: { type: 'string', default: '1' }, // procesos de Node del servidor (en EC2 se fija al preparar el servidor)
     reps: { type: 'string', default: '1' }, // repeticiones por prueba: 3 para separar diferencias reales de ruido
     remote: { type: 'boolean', default: false },
     lab: { type: 'string', default: 'http://localhost:7070/' },
@@ -71,7 +72,7 @@ for (const [i, env] of ENVS.entries()) {
       await idle();
     }
     log(`Preparando ${env}`);
-    await post('api/prepare', { mode: env });
+    await post('api/prepare', { mode: env, workers: Number(args.workers) });
     await idle();
   }
   if (!st.ready) {

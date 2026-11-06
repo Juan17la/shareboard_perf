@@ -342,7 +342,11 @@ export async function runTest(opts, write) {
     const invalid = genElu != null && genElu > 0.85;
     if (invalid) reasons.push('generador saturado: no válido');
     // Con el servidor caído, los percentiles son conexiones rechazadas al instante: no son latencia.
-    const serverDownPct = aw.length ? round((aw.filter((s) => !s.server).length / aw.length) * 100, 0) : 0;
+    // Muestras sin servidor + el silencio final del agente: si la máquina lo mata junto con el servidor, ya no llegan muestras.
+    // Los huecos sueltos no cuentan: con la CPU recortada el agente se atrasa aunque el servidor siga vivo.
+    const lastSample = agents.filter((r) => r.ts >= from && r.ts <= to).at(-1)?.ts ?? from;
+    const silentSec = (to - lastSample) / 1000 > 10 ? (to - lastSample) / 1000 : 0;
+    const serverDownPct = opts.agentUrl ? round(((aw.filter((s) => !s.server).length + silentSec) / secs) * 100, 0) : 0;
     if (serverDownPct > 5) reasons.unshift(`servidor caído ${serverDownPct} % de la ventana`);
 
     // ¿El trabajo fue constante? Primer tercio de la ventana contra el último.

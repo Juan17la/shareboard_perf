@@ -1,22 +1,18 @@
 # Conclusiones
 
-> **Modelo de carga anterior.** Estas cifras son de la campaña del 2 de noviembre (sesiones de 2 a 5 minutos, 95 % de logins, tableros que crecían sin límite y rampa con logins). Sirven como evidencia de los mecanismos, pero las capacidades no representan uso real. Se reemplazan al repetir la campaña con el [modelo actual](CARGAS.md): `node telemetry/campana.mjs`, luego `node telemetry/tablas.mjs`.
+Respuestas a las cuatro preguntas del proyecto, sustentadas con las mediciones de [MEDICIONES.md](MEDICIONES.md). Los datos crudos están en `resultados/2026-11-04/` (PC y Docker) y `resultados/2026-11-05/` (AWS).
 
-Respuestas a las cuatro preguntas del proyecto, sustentadas con las mediciones de [MEDICIONES.md](MEDICIONES.md). Cada afirmación lleva el número que la respalda y el archivo de donde sale (`resultados/<entorno>/`).
-
-**Resumen.** Shareboard espera en la **CPU**, y en dos partes distintas del proceso de Node:
-
-1. el **threadpool de libuv**, donde se calcula scrypt en cada login y registro;
-2. el **único hilo de JavaScript**, que serializa y envía cada mensaje de tiempo real a todos los participantes de un tablero.
-
-Ni el disco ni la memoria ni la red son el límite en ninguna de las cargas medidas.
+**Resumen.** Shareboard espera en la **CPU**, sobre todo en el **único hilo de JavaScript**, que procesa y reenvía cada mensaje de tiempo real. Fuera de ese límite, cada entorno tiene el suyo: la cuota y el heap en los contenedores, la RAM y la velocidad del núcleo en AWS, y los créditos de CPU en Limited. El disco y la red no fueron el límite en ninguna carga.
 
 | Entorno | Carga más alta que sostiene | Qué se agota primero |
 |---|---|---|
-| PC nativo (4 P-cores dedicados) | Alta: 600 usuarios activos | Hilo de JavaScript (75 % promedio, 102 % pico) |
-| Contenedor 2 CPU | Media: 240 | Hilo de JavaScript (93 %) + freno de cuota |
-| Contenedor 1 CPU | Baja: 120 | Cuota de CPU del cgroup (687 ms/s de freno con la máquina al 86 % libre) |
-| AWS t3.small | Menos de 120 | CPU real: un núcleo físico con 2 hilos, al 80-100 % |
+| PC nativo | 3.000 usuarios | Hilo de JavaScript (79 % a 3.000, 99 % en el killer) |
+| Contenedor 2 CPU | 2.000 | Hilo (75 %) y, con 3.000, el heap de V8 |
+| Contenedor 1 CPU | 1.000 | Cuota de CPU (128 ms/s de freno con la máquina casi libre) |
+| AWS Unlimited | 1.000 | Hilo (74 % a 1.000, 97 % a 2.000) y, con 6.000, la RAM |
+| AWS Limited | 300 sostenidos; 600 con créditos acumulados | Créditos de CPU (steal ~60 % al agotarlos) |
+
+Baja, media, alta y killer tienen 3 repeticiones; las cargas de 1.000, 2.000 y 3.000 tienen 1, así que esos límites indican el orden y no un valor exacto.
 
 ---
 
@@ -24,126 +20,138 @@ Ni el disco ni la memoria ni la red son el límite en ninguna de las cargas medi
 
 ### Cómo se midió
 
-- **Carga sostenida, no ráfagas.** Cada prueba dura 12,5 minutos: 120 s de llegada, 30 s de estabilización y **600 s medidos**. Durante los 600 s los usuarios entran y salen sin parar al ritmo de la prueba (1 o 2 por segundo; 20 en Server killer), así el login, el registro y el tiempo real se ejercitan durante toda la medición.
-- **Mediciones propias y reproducibles.** Los guiones están en `telemetry/`: `lab.mjs` es el laboratorio, `campana.mjs` corre todas las pruebas y `tablas.mjs` genera las tablas. Los datos crudos, segundo a segundo, están en `resultados/`. Ningún número viene de internet salvo los precios.
-- **Fuente de cada número.** CPU de `/proc/stat` y de `/proc/<pid>/task/*/stat`, memoria de `VmRSS`, disco de `/proc/diskstats`, red de `/proc/net/dev`, freno del contenedor de `cpu.stat` del cgroup. La latencia del usuario la mide el generador en percentiles (p50, p95, p99). La latencia interna sale del log de Fastify.
-- **Criterio de "pasa":** p95 de REST < 300 ms, p95 de login < 1 s, p95 del tiempo real < 150 ms, p99 del ping < 100 ms y errores < 1 % durante los 600 s.
+- **Carga sostenida y realista.** Cada prueba dura 12,5 minutos: 120 s de llegada, 30 s de estabilización y **600 s medidos**. Las personas llegan y salen en salas de distintos tamaños, con un horario que no depende de lo que tarde el servidor ([CARGAS.md](CARGAS.md)).
+- **Mediciones propias y reproducibles.** `lab.mjs` es el laboratorio, `campana.mjs` corre las pruebas y `tablas.mjs` genera las tablas. Ningún número de rendimiento viene de internet.
+- **Fuente de cada número.** CPU de `/proc/stat` y `/proc/<pid>/task/*/stat`, memoria de `VmRSS`, disco de `/proc/diskstats`, red de `/proc/net/dev`, freno de `cpu.stat` del cgroup. La latencia del usuario la mide el generador en percentiles; la interna sale del log de Fastify.
+- **Criterio de "pasa":** p95 de REST < 300 ms, p95 de login y registro < 1 s, p95 del tiempo real < 150 ms, p99 del ping < 100 ms y errores REST < 1 % durante los 600 s.
 
-### Por qué 600 usuarios en el PC (y no 1.000)
+### Por qué 3.000 usuarios en el PC
 
-El costo del tiempo real en el hilo de JavaScript es **lineal y constante**. Dividiendo la CPU del hilo principal entre los mensajes entregados por segundo:
+El costo del tiempo real en el hilo de JavaScript es casi **constante por mensaje**. Dividiendo la CPU del hilo entre los mensajes entregados por segundo:
 
-| PC nativo | Mensajes entregados/s | CPU del hilo JS | CPU por mensaje |
-|---|---|---|---|
-| Baja (120) | 11.505 | 14 % | 12,1 µs |
-| Media (240) | 22.863 | 29 % | 12,5 µs |
-| Alta (600) | 59.135 | 75 % | 12,7 µs |
+| PC nativo | Conectados | Mensajes entregados/s | Hilo JS | CPU por mensaje |
+|---|---|---|---|---|
+| Alta | 577 | 13.859 | 18 % | 12,8 µs |
+| 1.000 | 960 | 21.989 | 29 % | 13 µs |
+| 2.000 | 1.921 | 45.535 | 51 % | 11,3 µs |
+| 3.000 | 2.825 | 61.505 | 79 % | 12,8 µs |
 
-Con 12,7 µs por mensaje, un hilo llega al 100 % en 1 / 12,7 µs ≈ **78.700 mensajes por segundo**. Con la mezcla de tableros de la prueba (~98 mensajes por usuario por segundo) eso son unos **800 usuarios** como techo físico.
+Con ~12,8 µs por mensaje, el hilo llega al 100 % en unos **78.000 mensajes por segundo**. Con la mezcla de esta prueba, son unos 3.600 usuarios como techo.
 
-Pero la latencia se rompe antes. Por teoría de colas, el tiempo de espera crece como ρ/(1−ρ): a ρ = 0,75 la espera media es 3 veces el tiempo de servicio y a ρ = 0,93, 13 veces. Con la carga alta el PC queda en ρ = 0,75 y su ping p99 es de 73 ms, cerca del límite de 100 ms. El contenedor de 2 CPU, con la **misma** carga, llega a ρ = 0,93: su ping p99 es de 1.225 ms y no pasa. **El límite útil del PC está entre 600 y 650 usuarios.**
+La latencia se rompe antes de ese techo. Por teoría de colas, la espera crece como ρ/(1−ρ): con ρ = 0,75 es 3 veces el tiempo de servicio y con ρ = 0,97 es 32 veces. Se ve en AWS Unlimited: el ping p99 pasa de 53 ms con el hilo al 74 % a 1,05 s con el hilo al 97 %.
 
-### Por qué el login rompe todo en Server killer
+### Por qué 1.000 en AWS Unlimited
 
-El costo de un login en el threadpool también es medible: CPU de los hilos `libuv-worker` ÷ logins por segundo.
+Cada mensaje cuesta unos **35 µs** en AWS, 2,7 veces más que en el PC, y cada login 255-298 ms frente a 136 ms. Con 976 usuarios, el hilo ya va al 74 %. La memoria y la red todavía no molestan.
 
-| | CPU por login (scrypt) |
-|---|---|
-| PC nativo y contenedores (P-cores a 4,5 GHz) | 142-185 ms |
-| AWS t3.small (Xeon 8175M) | 300-365 ms |
+### Por qué Limited rinde menos sin que cambie la máquina
 
-El threadpool tiene 4 hilos (`UV_THREADPOOL_SIZE` por defecto), así que la capacidad máxima del PC es de 4 / 0,142 s ≈ **28 logins por segundo**. Server killer llega a 50 por segundo durante su rampa: la fila crece 22 por segundo y nunca se vacía. Los 4 hilos quedan al 393 % (llenos) y los logins superan los 15 s del tiempo límite. **El PC muere con el 57 % de la CPU libre**: el límite es el tamaño del pool, no la máquina.
-
-### Por qué AWS no pasa ni la carga baja
-
-En AWS, cada mensaje cuesta 30-33 µs de hilo JS (2,5 veces más que en el PC) y cada login 300-365 ms (2,1 veces más). La demanda de CPU de la carga baja es: hilo JS (tiempo real) 0,38 vCPU + threadpool (logins) 0,28 + MongoDB 0,04 = **0,70 vCPU de 2**. Coincide con lo medido para toda la máquina: 38 % = 0,76 vCPU. Las dos vCPU son un solo núcleo físico, así que dos hilos ocupados a la vez se reparten las mismas unidades de ejecución. Basta para el promedio, pero la cola del registro llega a 1.047 ms en p95 y supera el límite. En la carga media la demanda sube al 80 % de la máquina y el REST p95 a 1.178 ms.
+Limited gana 24 créditos por hora, lo que equivale a 0,4 vCPU, **cerca del 20 % de la máquina**. Sin créditos, AWS le retira el resto: el steal sube a ~60 % y la CPU útil queda en 16-19 %. Baja y media (6 % y 15 %) quedan por debajo. Alta (27 %) queda por encima: pasó gastando reserva. Por proyección lineal, el límite sostenido estaría en unos 400-450 usuarios; no se midió.
 
 ---
 
 ## 2. ¿Qué componente del computador está causando ese comportamiento?
 
-### 2.1 El núcleo de CPU que ejecuta el hilo de JavaScript (la parte secuencial)
+### 2.1 El núcleo que ejecuta el hilo de JavaScript
 
-Node ejecuta todo el JavaScript de un proceso en **un solo hilo**: el bucle de eventos. Cada mensaje de tiempo real pasa por `broadcast()` en `servidor/src/ws/hub.ts`, que llama a `client.send(msg)` para cada participante. `send` hace `JSON.stringify(msg)` **por cada destinatario** (`servidor/src/ws/index.ts:32`). Es trabajo de CPU puro, secuencial, que crece con el cuadrado del tamaño del tablero: n usuarios enviando a n−1 destinatarios.
+Node ejecuta todo el JavaScript de un proceso en **un solo hilo**. Cada mensaje de tiempo real pasa por `broadcast()` en `servidor/src/ws/hub.ts`, que llama a `send` para cada participante. `send` hace `JSON.stringify(msg)` **por cada destinatario** (`servidor/src/ws/index.ts:32`). Es trabajo de CPU secuencial.
 
-La evidencia es la ley de Amdahl en los datos. En la carga alta del PC el núcleo más ocupado llega al 100 % mientras la máquina completa está al 18 % (81 % libre). Con 4 núcleos físicos disponibles, el proceso no puede usar más de uno para esta parte. Más núcleos no la aceleran; un núcleo **más rápido** sí. Por eso el mismo mensaje cuesta 12,7 µs en un P-core Meteor Lake a 4,5 GHz y 30 µs en una vCPU Skylake a 2,5-3,1 GHz que comparte el núcleo físico con otro hilo.
+La evidencia está en los datos: en el PC con 3.000 usuarios el hilo va al 79 % mientras la máquina entera está al 17 %. Más núcleos no aceleran esa parte, pero un núcleo más rápido sí: el mismo mensaje cuesta 12,8 µs en un P-core a 4,5 GHz y unos 35 µs en una vCPU de 2,5 GHz de base que comparte el núcleo físico con otro hilo.
 
-### 2.2 El threadpool de libuv y la caché/memoria (scrypt)
+### 2.2 El threadpool de libuv, la caché y la memoria (scrypt)
 
-`hashPassword` y `verifyPassword` (`servidor/src/pin.ts`) usan scrypt con N=2¹⁴, r=8, p=5: 5 pasadas secuenciales que recorren al azar un bloque de **16 MB**. scrypt es *memory-hard* a propósito: su conjunto de trabajo no cabe en la caché L2 (2 MB por P-core en el PC, 1 MB en el Xeon) y cuatro logins simultáneos (64 MB) superan la L3 (18 MB en el PC, 33 MB compartidos con otros clientes en AWS). Cada acceso aleatorio que falla en caché va a la RAM. Por eso el login cuesta ~140 ms en el PC y más del doble en AWS, donde además los dos hilos hermanos de hyperthreading comparten la L1 y la L2 del mismo núcleo.
+`hashPassword` y `verifyPassword` (`servidor/src/pin.ts`) usan scrypt con N=2¹⁴, r=8, p=5, sobre un bloque de **16 MB** recorrido al azar. Ese bloque no cabe en la caché L2 y cada fallo va a la RAM. Por eso el login cuesta 136 ms en el PC y unas 2 veces más en AWS.
 
-El cálculo corre en el threadpool de libuv (4 hilos), no en el hilo principal. Por eso el login no congela el tiempo real mientras hay CPU libre, pero limita la tasa máxima de logins a 4 / tiempo de servicio.
+Corre en el threadpool, no en el hilo principal, y en este modelo solo ~13 % de las llegadas hace login. Por eso **ya no es el límite**: en el killer del PC, libuv usa ~8 % de un núcleo frente al 99 % del hilo de JavaScript. El PIN de un tablero sí usa `scryptSync` en el hilo principal, y coincide con un escalón del p95 de REST (~30 ms en el PC, ~50 ms en AWS).
 
-### 2.3 El planificador del kernel y la cuota del cgroup (contenedores)
+### 2.3 La cuota del cgroup y el heap de V8 (contenedores)
 
-`cpus: 1` no reserva un núcleo: el CFS le da al contenedor **100 ms de CPU cada 100 ms**. El proceso de Node tiene más de 10 hilos (JS, 4 de libuv, varios de V8). Cuando coinciden un login y el tiempo real, la cuota se gasta en 20-30 ms y el kernel **congela todo el contenedor** hasta el siguiente periodo, incluido el hilo de JavaScript.
+`cpus: 1` no reserva un núcleo: el kernel da **100 ms de CPU cada 100 ms** y, si el proceso los gasta antes, congela todo el contenedor.
 
-| Contenedor 1 CPU | Baja | Media |
+| Con 2.000 usuarios | Contenedor 1 CPU | Contenedor 2 CPU |
 |---|---|---|
-| CPU usada en promedio | 0,31 CPU | 0,69 CPU |
-| Freno del kernel (promedio) | 73 ms/s | **687 ms/s** |
-| Ping p99 (el servidor solo contesta "pong") | 36 ms | **680 ms** |
-| CPU libre en la máquina | 91 % | **86 %** |
+| Freno del kernel | 128 ms/s | 16 ms/s |
+| Ping p99 | **227 ms** | 65 ms |
+| Máquina en uso | 19 % | 20 % |
+| Resultado | ✕ | ✓ |
 
-El contenedor de 1 CPU falla la carga media con el hardware ocioso: el componente responsable es el **límite del cgroup**, no la CPU. Con 2 CPU de cuota el freno baja a 21 ms/s y pasa la misma carga.
+El contenedor de 1 CPU falla con el hardware casi libre: el responsable es el **límite del cgroup**.
 
-### 2.4 Lo que no es el cuello de botella (y por qué)
+Con 512 MB de memoria, V8 limita su heap a cerca de la mitad del contenedor. Por eso el proceso muere con `Ineffective mark-compacts near heap limit` a ~249 MB de heap vivo, sin que el kernel intervenga. Ocurre en el killer (52-88 s) y en el contenedor de 2 CPU con 3.000 usuarios (332 s). `--max-old-space-size` podría moverlo, pero no se probó.
+
+### 2.4 Un solo núcleo físico, la RAM y los créditos (AWS)
+
+- **1 núcleo físico.** Las 2 vCPU comparten unidades de ejecución y caché; Node, libuv y MongoDB compiten por ellas.
+- **RAM.** Con 6.000 usuarios, servidor (~690 MB) y MongoDB (~700 MB) agotan 1,9 GB. El kernel mata procesos: 3 de 3 corridas en Unlimited. En una de ellas mató primero a MongoDB.
+- **Créditos.** Solo en Limited, ver la sección 1.
+
+### 2.5 Lo que no es el cuello de botella
 
 | Componente | Medición | Por qué no limita |
 |---|---|---|
-| Disco | IOPS promedio 11-504, %util promedio ≤ 4 %, iowait < 1 % en las 16 pruebas | Las escrituras de tableros se agrupan cada 1 s (`WRITE_DELAY_MS`) y la caché de WiredTiger de MongoDB (235-489 MB de RES) contiene todos los datos activos: las lecturas se sirven desde RAM. El EBS gp3 ofrece 3.000 IOPS de base; el NVMe del PC, cientos de miles |
-| Memoria | RES del servidor 174-375 MB; nunca se acercó a los 512 MB del contenedor | Crece con los tableros abiertos: ~0,15 MB por usuario activo (202 MB con 120 usuarios, 276 MB con 600 en el PC) |
-| Red | AWS: 10 MB/s de salida en la carga media (pico 26 MB/s) | Por debajo de los 16 MB/s de base de la t3.small. En el PC y los contenedores el tráfico es local |
+| Disco | Fuera del killer de Unlimited: promedio < 130 IOPS, < 8 %util, espera de ~2 % o menos | Los cambios se agrupan cada 1 s (`WRITE_DELAY_MS`) y los tableros activos están en RAM. En ese killer sube hasta 1.014 IOPS, pero al quedarse la máquina sin RAM: es un síntoma |
+| Memoria (salvo los casos anteriores) | ~0,12 MB por usuario conectado en el PC (181 MB a 100 usuarios, 506 MB a 2.825) | Solo limita con 512 MB (contenedor) o 1,9 GB (AWS) y mucha carga |
+| Red | AWS Unlimited: 15 MB/s de salida con 2.000 usuarios | Se acerca a la base de 16 MB/s, pero ahí el hilo ya está saturado. Sería el siguiente límite al mejorar la CPU |
 
 ---
 
 ## 3. Si la carga se multiplicara por diez, ¿qué se rompería primero?
 
-Server killer **es** la carga alta multiplicada por diez (6.000 usuarios, 20 entradas por segundo), así que la respuesta está medida y no proyectada:
+Server killer **es** la carga alta multiplicada por diez (600 → 6.000 usuarios), así que la respuesta está medida:
 
-1. **Primero: el login, en los cuatro entornos.** Siempre el mismo error (`login:TIMEOUT`, 401 a 6.985 casos) y el mismo mecanismo: la llegada de logins supera la capacidad del threadpool (≈ 28/s en el PC, mucho menos con 1-2 CPU o en AWS), la fila crece sin límite y las peticiones superan los 15 s. El PC duró 95 s; los contenedores y AWS, entre 26 y 44 s.
+| Entorno | Qué se rompe primero | Cuándo |
+|---|---|---|
+| Contenedores | Heap de V8 con 512 MB: el proceso muere | 52-88 s |
+| AWS Limited | Créditos de CPU: steal ~60 % | Minuto 2-3 |
+| AWS Unlimited | Primero el hilo de JavaScript y luego la RAM, que tumba el proceso | 7,7-11,3 min |
+| PC | Hilo de JavaScript (99 %): 38 % de errores, sin caída | Toda la prueba |
 
-Si el login se resolviera, lo siguiente se calcula con las demandas medidas:
+En todos, lo que falla para el usuario es **entrar**: `join` y `list` llegan al tiempo límite de 15 s, porque sus peticiones esperan en la fila del hilo.
 
-2. **Segundo: el hilo de JavaScript (tiempo real).** 10 veces la carga alta son ~590.000 mensajes por segundo × 12,7 µs = **7,5 núcleos** de trabajo secuencial. Un proceso de Node solo puede usar uno. No hay máquina que lo resuelva sin cambiar la arquitectura (varios procesos).
-3. **Tercero: la memoria en el contenedor.** A ~0,15 MB por usuario, 6.000 usuarios son ~200 MB + 880 MB ≈ **1,1 GB** de RES: el contenedor de 512 MB sería terminado por el kernel (OOM). En la t3.small (2 GB) apenas cabría junto a MongoDB.
-4. **Cuarto, solo en la nube: la red.** La salida del servidor en la carga alta es ~35 MB/s (medida en loopback en el PC); por diez, ~350 MB/s ≈ 2,8 Gbps. Es 22 veces la base de la t3.small (0,128 Gbps): los créditos de ráfaga de red se agotarían en minutos.
-5. **Lo último: el disco.** 117 IOPS promedio en la carga alta × 10 = ~1.200 IOPS, por debajo de los 3.000 de base de gp3.
+Si se resolvieran esos límites, seguiría el trabajo secuencial. Mantener 6.000 usuarios requeriría ~130.000 mensajes por segundo × 12,8 µs ≈ **1,7 núcleos** de JavaScript en el PC (proyección). Un solo proceso de Node solo puede usar uno, así que no hay máquina que lo resuelva sin cambiar la arquitectura.
 
 ---
 
 ## 4. ¿Qué opción descartaron y por qué?
 
-### Descartada: AWS t3.small
+### Descartada: contenedor de 1 CPU
 
-Es la más barata (USD 20,43/mes con disco e IP), pero **no sostiene ni la carga baja**. Su problema es de hardware. Las 2 vCPU son **un solo núcleo físico** con hyperthreading, de una generación anterior y a menor frecuencia. Cada login cuesta 300-365 ms de CPU (2,1 veces el PC) y cada mensaje de tiempo real 30 µs (2,5 veces). Además es una instancia *burstable*: su línea base es el 20 % por vCPU. Con una carga sostenida al 80 % (la media) viviría de créditos en modo Unlimited, pagando el excedente (USD 0,05 por vCPU-hora). Subir a t3.medium no ayuda: tiene la misma CPU y solo agrega memoria, que no es el límite.
+Con 2.000 usuarios falla con la máquina casi libre: el kernel lo frena por su cuota. Cuesta más que la t3.small (~USD 25/mes frente a USD 20,43) y da la misma capacidad medida.
 
-### Descartada: contenedor de 1 CPU (equivalente a un plan PaaS de 1 CPU, ~USD 25/mes)
+### Descartada para más de 300 usuarios: AWS Limited sin reserva
 
-Falla la carga media **con el 86 % de la CPU de la máquina libre**. El límite es la cuota del cgroup: los picos de varios hilos (scrypt + tiempo real) gastan los 100 ms del periodo y el kernel congela el proceso entero, incluido el hilo de JavaScript. Se paga por una CPU que el proceso no puede usar de forma continua.
+Por encima de ~20 % de la máquina depende de créditos, y cuando se acaban pasa de funcionar a fallar casi todo. Sirve para la carga de referencia o para picos cortos con reserva, no para cargas altas sostenidas.
+
+### Descartado para producción: PC
+
+Es el más capaz, pero sin IP fija, disponibilidad 24/7 ni redundancia.
 
 ### Lo que se recomienda
 
-- **Para la carga media (240 usuarios activos, 2 entradas por segundo):** como mínimo, **2 CPU dedicadas** de buen rendimiento por hilo. El contenedor de 2 CPU la pasa con los mismos números que el PC (REST p95 4,9 ms, login p95 227 ms). Equivale a un plan de 2 CPU (Render Pro, USD 85/mes) o a una VM no *burstable* de 2 núcleos físicos. Esta VM no se midió; se recomienda repetir las pruebas antes de contratarla.
-- **Para la carga alta (600):** ningún plan con un solo proceso de Node tiene margen; el PC la pasa con el hilo de JavaScript al 75 %. Hace falta cambiar el código.
+| Si se necesita | Opción | Por qué |
+|---|---|---|
+| Hasta 300 usuarios (referencia) | **AWS t3.small con créditos (Limited)**, USD 20,43/mes | Usa 15 % de la máquina, por debajo de su base de 20 %. Es lo más barato que la pasa |
+| Hasta 600, con picos | **t3.small Unlimited** | Pasa sin riesgo de recorte. El excedente estimado es de hasta ~USD 5/mes si la carga durara todo el mes |
+| Hasta 1.000 | t3.small Unlimited, sin margen (hilo al 74 %, una sola corrida) o una instancia con más CPU | Una VM de mayor rendimiento por hilo no se midió: repetir las pruebas antes de contratarla |
+| Más de 2.000 | Cambiar el código | Ninguna opción medida con un proceso de Node tiene margen por mucho tiempo |
 
-### Cambios en el código que mueven el límite (por orden de impacto esperado)
+### Cambios en el código que mueven el límite
+
+No se probaron. Cada uno debe medirse con la misma prueba y presentarse como "antes y después".
 
 | Cambio | Dónde | Ataca | Efecto esperado |
 |---|---|---|---|
-| Serializar una sola vez por difusión: `JSON.stringify(msg)` en `broadcast()` y enviar el mismo texto a todos | `ws/hub.ts`, `ws/index.ts:32` | Hilo de JavaScript (2.1) | Hoy un mensaje a un tablero de 30 se serializa 29 veces. Debería bajar buena parte de los 12,7 µs por mensaje |
-| Agrupar cursores en el servidor: un mensaje por tablero cada 50 ms con todos los cursores | `ws/index.ts` | Hilo de JavaScript, red | Pasa de n² mensajes a n por ventana en tableros grandes |
-| `UV_THREADPOOL_SIZE` igual al número de núcleos (8 en el PC) | Variable de entorno | Threadpool (2.2) | Duplica la capacidad de login del PC (≈ 28 → 56 por segundo). En un contenedor, lo contrario: `UV_THREADPOOL_SIZE` ≤ CPU de cuota, para no generar ráfagas que activen el freno |
-| Sesiones más largas (tokens con renovación) para que el usuario no repita el login en cada visita | `routes/auth.ts`, `tokens.ts` | Threadpool | Menos logins por usuario. Bajar los parámetros de scrypt no es opción: N=2¹⁴, p=5 es el mínimo de OWASP |
-| Varios procesos de Node con afinidad por tablero y Redis pub/sub entre ellos | `ws/hub.ts` (el comentario `ponytail:` ya describe el diseño) | Parte secuencial | Usa todos los núcleos: es lo único que resuelve el punto 2 de la sección 3 |
-
-Cada cambio debe medirse con la misma prueba (misma carga, mismo entorno) y presentarse como "antes y después".
+| Serializar una sola vez por difusión | `ws/hub.ts`, `ws/index.ts:32` | Hilo de JS | Hoy un mensaje a un tablero de 30 se serializa 29 veces. Debería bajar buena parte del costo por mensaje |
+| Agrupar cursores en el servidor | `ws/index.ts` | Hilo de JS y red | Pasa de n² mensajes a n por ventana en tableros grandes |
+| Hacer asíncrona la validación del PIN | `pin.ts` | Hilo de JS | Elimina el bloqueo de ~30-50 ms al unirse a un tablero con PIN |
+| Varios procesos de Node con Redis entre ellos | `ws/hub.ts` (el comentario `ponytail:` ya describe el diseño) | Parte secuencial | Usa todos los núcleos; es lo único que resuelve el punto de la sección 3 |
+| Ajustar `--max-old-space-size` y la caché de MongoDB al tamaño de la máquina | Configuración | Memoria | Debería retrasar las caídas de los contenedores y de la t3.small |
 
 ### Opciones de método que también se descartaron
 
 | Opción | Por qué no |
 |---|---|
-| Generar la carga desde el PC de la casa hacia AWS | El cuello de botella sería la conexión de internet (decenas de MB/s de salida del servidor) y no la instancia. Se usó un generador en la misma zona de AWS (RTT 2-3 ms) |
-| MongoDB Atlas como base de datos | Agrega latencia de red y otra máquina fuera de nuestro control. MongoDB corre en Docker en cada entorno, igual en los cuatro |
-| Prometheus + Grafana | Son una caja negra para la sustentación. El agente propio permite señalar el archivo del kernel y la fórmula de cada número |
-| Sesiones de 40 minutos (la primera versión del generador) | Casi no generaban logins en una prueba de 10 minutos y ocultaban el componente más caro (scrypt). Ver [CARGAS.md](CARGAS.md) |
+| Generar la carga desde el PC de la casa hacia AWS | El cuello de botella sería la conexión a internet. Se usó un generador en la misma zona de AWS |
+| MongoDB Atlas como base de datos | Agrega latencia de red y otra máquina fuera de nuestro control. MongoDB corre en Docker en cada entorno |
+| Prometheus + Grafana | El agente propio permite señalar el archivo del kernel y la fórmula de cada número |
+| Modelo de carga anterior (sesiones de 2-5 min, 95 % de logins) | Representaba más una avalancha de scrypt que el uso real y dejaba crecer los tableros sin límite. Ver [CARGAS.md](CARGAS.md) |

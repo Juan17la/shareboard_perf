@@ -63,9 +63,10 @@
       <div class="card-h"><h3>¿Quién aguanta qué? <span class="unit">repeticiones que pasan / total</span></h3></div>
       <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
       <div class="aws-bar">
-        <button class="btn" id="aws-add">Añadir resultados de AWS</button>
+        <button class="btn" id="aws-add-unlimited">Añadir a AWS Unlimited</button>
+        <button class="btn" id="aws-add-limited">Añadir a AWS Limited</button>
         <input id="aws-file" type="file" accept=".ndjson" multiple hidden>
-        <span>Sube los <code>.ndjson</code> que descargas en Resultados. Cada archivo entra solo en la carga que le corresponde, y las repeticiones se juntan en su mediana.</span>
+        <span>Las corridas de la campaña ya están incluidas. Para sumar otras, elige el modo de créditos con el que se midieron y sube los <code>.ndjson</code> que descargas en Resultados. Cada archivo entra en la carga que le corresponde y las repeticiones se juntan en su mediana.</span>
         <span class="aws-msg" id="aws-msg" role="status"></span>
       </div>
     </div>
@@ -79,6 +80,8 @@
         <li><b>Una p95 de 15,1 s es el tope, no la medida:</b> el generador corta cada petición a los 15 s, así que el valor real es igual o peor.</li>
         <li><b>Una corrida caída no aporta latencia:</b> sus percentiles serían conexiones rechazadas. Se marca como «cayó» y queda fuera de la mediana.</li>
         <li><b>Repeticiones:</b> baja, media, alta y killer tienen 3; las de 1.000, 2.000 y 3.000 tienen 1, así que ahí no se puede separar la señal del ruido. La línea fina sobre cada barra va de la repetición menor a la mayor.</li>
+        <li><b>AWS Limited depende de sus créditos de CPU:</b> rinde como Unlimited hasta gastarlos y luego AWS le quita cerca del 60 % de la CPU (columna st). Sin créditos le queda ~20 % de la máquina (0,4 vCPU). Alta usa ~27 %: pasó gastando los créditos que ganó en Baja y Media, así que no prueba que sostenga 600 usuarios indefinidamente. Sus corridas de 1.000, 2.000 y 3.000 empezaron justo después de un killer, sin créditos: son su peor caso. En el killer, los créditos duraron 2 a 3 minutos.</li>
+        <li><b>Actualización automática en AWS Unlimited:</b> en la tercera repetición de Alta, Ubuntu instaló actualizaciones durante 2 de los 10 minutos medidos y el ping p99 de esa corrida subió a 23 ms (8 ms fuera de esos minutos). La mediana lo deja fuera, pero el rango lo muestra. También en AWS Unlimited: en el tercer killer, MongoDB murió por memoria a los 4 minutos, antes que el servidor.</li>
         <li><b>Red:</b> en el PC y Docker todo pasa por la interfaz local, así que entrada y salida salen iguales y no son comparables con una red real.</li>
       </ul>
     </details>

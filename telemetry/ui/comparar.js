@@ -1,4 +1,4 @@
-// Página Comparar: barras, pasteles y líneas de los cuatro entornos, por carga o a través de todas.
+// Página Comparar: barras, pasteles y líneas de los entornos, por carga o a través de todas.
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
@@ -20,8 +20,10 @@
     { id: 'pc', name: 'PC nativo', color: '--s1' },
     { id: 'docker-1cpu', name: 'Docker 1 CPU', color: '--s2' },
     { id: 'docker-2cpu', name: 'Docker 2 CPU', color: '--s3' },
-    { id: 'aws', name: 'AWS', color: '--s4', dash: true },
+    { id: 'aws-unlimited', name: 'AWS Unlimited', color: '--s4', dash: true, note: 't3.small, sin recorte de CPU' },
+    { id: 'aws-limited', name: 'AWS Limited', color: '--s5', dash: true, note: 't3.small, con créditos de CPU' },
   ];
+  const isAws = (id) => id.startsWith('aws-');
   const TESTS = [
     { id: 'baja', name: 'Baja', users: 100 },
     { id: 'media', name: 'Media', users: 300 },
@@ -114,6 +116,7 @@
     { key: 'rss', title: 'Memoria residente del servidor', unit: 'MB', fmt: auto, read: 'Si sube sin parar con usuarios constantes, hay una fuga o estado que crece.' },
     { key: 'serverCpu', title: 'CPU del servidor', unit: '% de un núcleo', fmt: pct, read: 'Puede pasar de 100 %: suma el hilo principal, libuv y V8.' },
     { key: 'throttled', title: 'Contenedor frenado', unit: 'ms/s', fmt: auto, read: 'Mayor que 0: el contenedor agotó su cuota de CPU.' },
+    { key: 'steal', title: 'CPU robada (steal)', unit: '% de la máquina', fmt: pct, read: 'Lo que AWS le quita a la instancia. En AWS Limited salta cuando se acaban los créditos; en los demás debe quedarse cerca de 0.' },
     { key: 'tx', title: 'Red: salida', unit: 'MB/s', fmt: auto, read: 'Sube en la llegada y debe quedarse plana. Si cae, el servidor dejó de reenviar.' },
     { key: 'iops', title: 'Disco: IOPS', unit: 'operaciones/s', fmt: auto, read: 'Compáralo con la ficha técnica del disco (EBS gp3: 3.000 IOPS).' },
     { key: 'errors', title: 'Errores', unit: 'por segundo', fmt: auto, read: 'Debe ser 0.' },
@@ -131,6 +134,7 @@
     { title: 'Login p50 dentro del servidor', unit: 'ms', fmt: ms, get: lat('srv', 'login', 'p50'), read: 'Con baja carga mide la velocidad de la CPU: scrypt siempre hace el mismo cálculo. Es el mejor número para comparar hardware.' },
     { title: 'Costo de JavaScript por mensaje', unit: 'µs de CPU por mensaje', fmt: auto, get: (r) => (r.msgsOut > 0 && r.res?.serverMainThread ? (r.res.serverMainThread.avg / 100) * 1e6 / r.msgsOut : null), read: 'Tiempo del hilo por cada mensaje de los clientes. Incluye el reenvío a los demás, así que depende del tamaño de las salas: compara entornos a la misma carga.' },
     { title: 'Errores totales', unit: '% de intentos a los 5 endpoints', fmt: pct, get: (r) => { const o = Object.values(r.byOp ?? {}); const n = o.reduce((t, x) => t + x.attempts, 0); return n ? (o.reduce((t, x) => t + x.failed, 0) / n) * 100 : null; }, read: 'Debe ser 0.' },
+    { title: 'CPU robada (steal)', unit: '% de la máquina, promedio', fmt: pct, get: res('steal'), read: 'Separa a AWS Limited de Unlimited: mismas máquinas, pero sin créditos AWS le quita cerca del 60 % de la CPU.' },
     { title: 'Red: salida', unit: 'MB/s, promedio', fmt: auto, get: res('netTxMBs'), read: 'Crece con los usuarios. En el PC y Docker es tráfico local; en AWS compáralo con el ancho de banda de la instancia.' },
     { title: 'Disco: IOPS', unit: 'promedio', fmt: auto, get: res('diskIops'), read: 'Si crece poco y el %util sigue bajo, el disco no es el cuello.' },
   ];
@@ -500,15 +504,16 @@
       const r = RUNS.find((x) => x.env === e.id);
       if (!r) return 'Sin resultados todavía';
       const cpu = r.machine ? `${r.machine.cpuModel.replace(/\(R\)|\(TM\)|Intel|CPU|@.*$/g, '').trim().replace(/\s+/g, ' ')}, ${r.machine.logicalCpus} hilos` : '';
-      return r.limits ? `Cuota ${r.limits.cpu} CPU, ${num(r.limits.memMB)} MB` : cpu;
+      return r.limits ? `Cuota ${r.limits.cpu} CPU, ${num(r.limits.memMB)} MB` : e.note ?? cpu;
     };
     const now = (t) => (t.id === view ? ' class="now"' : '');
     const head = `<thead><tr><th>Entorno</th>${TESTS.map((t) => `<th${now(t)}>${t.name}<small>${num(t.users)} usuarios</small></th>`).join('')}</tr></thead>`;
     const body = ENVS.map((e) => `<tr><td><b>${e.name}</b><small>${esc(machine(e))}</small></td>${TESTS.map((t) => {
       const runs = runsOf(e.id, t.id);
-      if (e.id !== 'aws') return `<td${now(t)}>${verdict(e.id, t.id)}</td>`;
-      const remove = runs.map((r, i) => `<button class="mini remove" data-remove="${esc(r.file)}" title="Quitar ${esc(r.file)}" aria-label="Quitar la corrida ${i + 1} de ${t.name}">quitar ${runs.length > 1 ? i + 1 : ''}</button>`).join('');
-      return `<td${now(t)}>${verdict(e.id, t.id).replace(/^–$/, '')}<div>${remove}<button class="mini" data-add="${t.id}" aria-label="Añadir resultado de AWS para ${t.name}">+ Añadir</button></div></td>`;
+      if (!isAws(e.id)) return `<td${now(t)}>${verdict(e.id, t.id)}</td>`;
+      // Solo se quita lo añadido desde esta página: las corridas de la campaña no se tocan aquí.
+      const remove = runs.filter((r) => r.uploaded).map((r, i) => `<button class="mini remove" data-remove="${esc(r.file)}" data-env="${e.id}" title="Quitar ${esc(r.file)}" aria-label="Quitar la corrida añadida ${i + 1} de ${e.name}, ${t.name}">quitar</button>`).join('');
+      return `<td${now(t)}>${verdict(e.id, t.id).replace(/^–$/, '')}<div>${remove}<button class="mini" data-add="${t.id}" data-env="${e.id}" aria-label="Añadir resultado a ${e.name}, ${t.name}">+ Añadir</button></div></td>`;
     }).join('')}</tr>`).join('');
     $('matrix').innerHTML = head + `<tbody>${body}</tbody>`;
   }
@@ -558,13 +563,14 @@
 
   // El archivo manda: un botón de carga solo confirma que el archivo sea de esa carga.
   let forTest = null;
+  let forEnv = null;
   async function upload(files) {
     const lines = [];
     let failed = false;
     for (const f of files) {
-      const r = await fetch(`api/comparar/aws${forTest ? `?test=${encodeURIComponent(forTest)}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/x-ndjson' }, body: f });
+      const r = await fetch(`api/comparar/aws?env=${forEnv}${forTest ? `&test=${encodeURIComponent(forTest)}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/x-ndjson' }, body: f });
       const j = await r.json().catch(() => ({}));
-      if (r.ok) lines.push(`✓ ${f.name}: añadido a ${TESTS.find((t) => t.id === j.test)?.name}`);
+      if (r.ok) lines.push(`✓ ${f.name}: añadido a ${ENVS.find((e) => e.id === forEnv)?.name}, ${TESTS.find((t) => t.id === j.test)?.name}`);
       else {
         failed = true;
         lines.push(`✕ ${f.name}: ${j.error ?? `error ${r.status}`}`);
@@ -574,11 +580,13 @@
     await load();
     render();
   }
-  const pick = (test) => {
+  const pick = (env, test) => {
+    forEnv = env;
     forTest = test;
     $('aws-file').click();
   };
-  $('aws-add').addEventListener('click', () => pick(null));
+  $('aws-add-unlimited').addEventListener('click', () => pick('aws-unlimited', null));
+  $('aws-add-limited').addEventListener('click', () => pick('aws-limited', null));
   $('aws-file').addEventListener('change', async (e) => {
     const files = [...e.target.files];
     e.target.value = '';
@@ -586,10 +594,10 @@
   });
   $('matrix').addEventListener('click', async (e) => {
     const add = e.target.closest('[data-add]');
-    if (add) return pick(add.dataset.add);
+    if (add) return pick(add.dataset.env, add.dataset.add);
     const rm = e.target.closest('[data-remove]');
     if (rm && confirm(`¿Quitar ${rm.dataset.remove} de la comparación? El archivo se borra de resultados/.`)) {
-      const r = await fetch(`api/comparar/aws/${encodeURIComponent(rm.dataset.remove)}`, { method: 'DELETE' });
+      const r = await fetch(`api/comparar/aws/${encodeURIComponent(rm.dataset.remove)}?env=${rm.dataset.env}`, { method: 'DELETE' });
       if (r.ok) say('Resultado quitado.');
       else say((await r.json().catch(() => ({}))).error ?? `Error ${r.status}`, true);
       await load();

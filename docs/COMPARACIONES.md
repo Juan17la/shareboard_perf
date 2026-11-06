@@ -1,137 +1,133 @@
-# Comparaciones: PC, contenedor y nube
+# Comparaciones: PC, contenedores y nube
 
-> **Modelo de carga anterior.** Estas cifras son de la campaña del 2 de noviembre (sesiones de 2 a 5 minutos, 95 % de logins, tableros que crecían sin límite y rampa con logins). Sirven como evidencia de los mecanismos, pero las capacidades no representan uso real. Se reemplazan al repetir la campaña con el [modelo actual](CARGAS.md): `node telemetry/campana.mjs`, luego `node telemetry/tablas.mjs`.
+Campaña del 4 al 6 de noviembre de 2026 con el [modelo de carga actual](CARGAS.md). Los cinco entornos se evaluaron con **las mismas cargas, el mismo código, los mismos datos y las mismas métricas** ([MEDICIONES.md](MEDICIONES.md)). Este documento explica, carga por carga, por qué dan resultados distintos y compara su costo. El resumen para leer de corrido está en [FINAL-REPORT.md](FINAL-REPORT.md).
 
-Las cuatro opciones se evaluaron con **las mismas cargas, el mismo código, los mismos datos y las mismas métricas** ([MEDICIONES.md](MEDICIONES.md)). Este documento explica, prueba por prueba, por qué dan resultados distintos, y compara su costo.
+Baja, media, alta y killer tienen 3 repeticiones (mediana); las cargas de 1.000, 2.000 y 3.000 tienen 1.
 
 ---
 
 ## 1. Fichas técnicas y precios
 
-| | PC nativo | Contenedor 1 CPU | Contenedor 2 CPU | AWS t3.small |
-|---|---|---|---|---|
-| Procesador | Intel Core Ultra 5 125H (Meteor Lake, 2023): 4 P-cores + 8 E-cores + 2 LP-cores, 18 hilos | El mismo | El mismo | Intel Xeon Platinum 8175M (Skylake-SP, 2017), 2,5 GHz base, 3,5 GHz turbo |
-| Núcleos usados por el servidor | P-cores 0-7: **4 núcleos físicos con 2 hilos cada uno**, hasta 4,5 GHz | Los mismos, con cuota de **1 CPU** de tiempo | Los mismos, con cuota de **2 CPU** de tiempo | **2 vCPU = 1 núcleo físico con 2 hilos** (hyperthreading) |
-| Caché L2 / L3 | 2 MB por P-core / 18 MB compartida | Igual | Igual | 1 MB por núcleo / 33 MB compartida entre todos los clientes del host |
-| Memoria | 15 GB LPDDR5x | 512 MB (límite) | 512 MB (límite) | 2 GB |
-| Disco | NVMe Micron 2550, 512 GB | El mismo | El mismo | EBS gp3: 3.000 IOPS y 125 MB/s de base, por red |
-| Red | Loopback (misma máquina) | Loopback | Loopback | "Hasta 5 Gbps": 0,128 Gbps (16 MB/s) de base con créditos de ráfaga |
-| Modelo de CPU | Dedicada | Cuota CFS: 100 ms cada 100 ms por CPU; si la gasta, el kernel lo frena | Igual, 200 ms cada 100 ms | *Burstable*: línea base de 20 % por vCPU; con créditos Unlimited puede usar el 100 % y paga el excedente |
-| **Precio** | Precio de compra del portátil: ________ COP (amortizado a 36 meses: ________ COP/mes) + energía ≈ **17.600 COP/mes** (28 W de potencia base × 730 h × 863,6 COP/kWh) | Plan equivalente en un PaaS: Render Standard (1 CPU, 2 GB) **USD 25/mes** | Render Pro (2 CPU, 4 GB) **USD 85/mes** | **USD 20,43/mes**: instancia USD 15,18 (0,0208 × 730 h) + disco USD 1,60 (20 GB × 0,08) + IPv4 pública USD 3,65 (0,005 × 730 h) |
+| | PC nativo | Contenedor 1 CPU | Contenedor 2 CPU | AWS Unlimited | AWS Limited |
+|---|---|---|---|---|---|
+| Procesador | Intel Core Ultra 5 125H (2023): 4 P-cores + 8 E-cores + 2 LP-cores, 18 hilos | El mismo | El mismo | Intel Xeon Platinum 8259CL, 2,5 GHz de base | El mismo tipo |
+| Núcleos del servidor | P-cores 0-7: **4 núcleos físicos con 2 hilos cada uno**, hasta 4,5 GHz | Los mismos, con cuota de **1 CPU** de tiempo | Los mismos, con cuota de **2 CPU** de tiempo | **2 vCPU = 1 núcleo físico con 2 hilos** | Igual |
+| Modelo de CPU | Dedicada | Cuota CFS: 100 ms cada 100 ms; si la gasta, el kernel lo frena | Igual, 200 ms cada 100 ms | *Burstable*: puede usar el 100 % y paga el excedente | *Burstable*: base de 20 % por vCPU (~20 % de la máquina); por encima gasta créditos y, sin ellos, AWS la recorta |
+| Memoria | 15 GB | 512 MB (límite) | 512 MB (límite) | 1,9 GB | 1,9 GB |
+| MongoDB | Docker, sin límite | Docker, 1 CPU y 1 GB | Docker, 1 CPU y 1 GB | Docker, sin límite | Docker, sin límite |
+| Disco | NVMe Micron 2550, 512 GB | El mismo | El mismo | EBS gp3: 3.000 IOPS y 125 MB/s de base, por red | Igual |
+| Red | Local | Local, por el puente de Docker | Igual | "Hasta 5 Gbps": 0,128 Gbps (16 MB/s) de base con ráfagas | Igual |
+| **Precio** | Compra del portátil: ________ COP (a 36 meses: ________ COP/mes) + energía ≈ **17.600 COP/mes** (28 W × 730 h × 863,6 COP/kWh) | Plan equivalente: Render Standard (1 CPU, 2 GB) **USD 25/mes** | Render Pro (2 CPU, 4 GB) **USD 85/mes** | **USD 20,43/mes** + excedente de CPU | **USD 20,43/mes**: instancia 15,18 (0,0208 × 730 h) + disco 1,60 (20 GB × 0,08) + IPv4 3,65 (0,005 × 730 h) |
 
 Notas de precio:
 
-- Precios de AWS On-Demand, región us-east-1, consultados el 2 de noviembre de 2026. El generador (t3.micro, USD 0,0104/h) no cuenta: solo existe para medir.
-- La tarifa de energía es la de Enel Colombia para estrato 4, agosto de 2026 (863,6 COP/kWh). La potencia del PC **no se midió** (RAPL requiere root): 28 W es la potencia base del procesador según Intel y se usa como estimación. El PC además no incluye IP pública, disponibilidad 24/7 ni respaldo eléctrico.
-- Render no incluye la base de datos: MongoDB se pagaría aparte en los tres casos sin máquina propia.
+- AWS On-Demand, us-east-1, consultado el 2 de noviembre de 2026. El generador (t3.micro, USD 0,0104/h) solo existe para medir y no cuenta.
+- Energía: tarifa de Enel Colombia, estrato 4, agosto de 2026. La potencia del PC **no se midió**: 28 W es la potencia base según Intel. El PC tampoco incluye IP pública, disponibilidad 24/7 ni respaldo eléctrico.
+- Render no incluye la base de datos: MongoDB se pagaría aparte.
 
 ---
 
-## 2. Prueba por prueba
+## 2. Carga por carga
 
-### 2.1 Carga baja: 120 usuarios, 1 entrada por segundo
+### 2.1 Baja, media y alta: 100, 300 y 600 usuarios
 
-| | PC | Cont. 1 CPU | Cont. 2 CPU | AWS |
-|---|---|---|---|---|
-| Resultado | ✓ | ✓ | ✓ | ✕ (registro p95 1.047 ms, límite 1.000) |
-| Login p50 dentro del servidor | 136 ms | 153 ms | 136 ms | **298 ms** |
-| Login p99 visto por el usuario | 245 ms | **735 ms** | 202 ms | 895 ms |
-| REST p95 | 3,8 ms | 4,3 ms | 3,7 ms | 17 ms |
-| CPU de la máquina (promedio) | 9 % | 9 % | 6 % | **38 %** |
-| Contenedor frenado (promedio / pico) | – | 73 / 2.210 ms/s | 1 / 126 ms/s | – |
+Los cinco entornos pasan todas las repeticiones (45 de 45).
 
-**Qué explica la diferencia:**
-
-- **El login cuesta el doble en AWS.** El login calcula scrypt, un algoritmo diseñado para ser caro en CPU y en memoria: 5 pasadas secuenciales sobre un bloque de 16 MB. En el PC tarda 136 ms; en la t3.small, 298 ms (2,2 veces más). Hay tres causas en el hardware: frecuencia (4,5 GHz de turbo en el P-core contra 2,5-3,1 GHz en el Xeon), microarquitectura (Meteor Lake hace más instrucciones por ciclo que Skylake) y que las 2 vCPU son **un solo núcleo con hyperthreading**: cuando dos logins se calculan a la vez, comparten las mismas unidades de ejecución y la misma caché L2, y cada uno avanza más lento.
-- **El contenedor de 1 CPU ya muestra el freno en la cola de latencia.** El promedio de CPU es bajo, pero cuando coinciden un login (threadpool) y el tiempo real (hilo principal), los hilos del proceso gastan los 100 ms de cuota antes de terminar el periodo y el kernel congela el contenedor hasta el siguiente. Por eso el p99 del login sube de 245 a 735 ms aunque la mediana casi no cambia.
-- Con 2 CPU de cuota el freno casi desaparece (1 ms/s promedio) y los números son iguales a los del PC.
-
-### 2.2 Carga media: 240 usuarios, 2 entradas por segundo
-
-| | PC | Cont. 1 CPU | Cont. 2 CPU | AWS |
-|---|---|---|---|---|
-| Resultado | ✓ | ✕ | ✓ | ✕ |
-| REST p95 usuario / dentro del servidor | 4,5 / 2,8 ms | **442 / 103 ms** | 4,9 / 2,7 ms | **1.178 / 442 ms** |
-| Login p95 | 202 ms | 1.490 ms | 227 ms | 2.791 ms |
-| Ping WebSocket p99 | 2,8 ms | **680 ms** | 6,7 ms | **1.490 ms** |
-| CPU de la máquina (us / sy / id) | 8 / 3 / 88 % | 10 / 4 / **86 %** | 6 / 3 / 90 % | 64 / 16 / **19 %** |
-| Hilo JS + libuv (promedio, % de un núcleo) | 29 + 32 | 34 + 35 | 31 + 27 | 66 + 72 |
-| Contenedor frenado | – | **687 ms/s** | 21 ms/s | – |
+| Con 600 usuarios | PC | Cont. 1 CPU | Cont. 2 CPU | AWS Unlimited | AWS Limited |
+|---|---|---|---|---|---|
+| Conectados | 577 | 574 | 581 | 580 | 582 |
+| REST p50, usuario / servidor | 3,2 / 2,0 ms | 3,6 / 2,1 ms | 3,6 / 2,1 ms | 7,2 / 4,7 ms | 6,4 / 4,2 ms |
+| Login p50, servidor | 136 ms | 147 ms | 142 ms | 298 ms | 298 ms |
+| Ping p50 / p99 | 0,12 / 0,9 ms | 0,17 / 1,9 ms | 0,17 / 1,2 ms | 0,52 / 12 ms | 0,50 / 7,2 ms |
+| Hilo JS | 18 % | 22 % | 22 % | 45 % | 42 % |
+| CPU de JS por mensaje entregado | 12,8 µs | 17,1 µs | 17,5 µs | 35 µs | 32 µs |
+| Contenedor frenado | – | 7 ms/s | 0 ms/s | – | – |
+| Steal | 0 % | 0 % | 0 % | 0,3 % | 0,3 % |
 
 **Qué explica la diferencia:**
 
-- **El contenedor de 1 CPU falla con la máquina ociosa** (86 % idle). No le falta hardware: le falta **cuota**. El proceso usa en promedio 0,69 CPU (34 % del hilo JS + 35 % de libuv), pero lo hace en ráfagas: cuando el hilo de JavaScript y varios hilos del threadpool trabajan a la vez, consumen los 100 ms del periodo en 20-30 ms y quedan congelados el resto. El frenado promedio es de 687 ms por segundo (sumado entre hilos). Durante esa pausa el hilo de JavaScript no atiende a nadie: el ping, que solo responde "pong", sube a 680 ms en p99.
-- **AWS falla por CPU real.** La máquina está al 80 % de uso promedio con picos de 100 %. Solo los logins consumen ~0,7 de núcleo (2 por segundo × ~0,35 s de scrypt). El resto es el tiempo real y MongoDB. Con dos hilos compitiendo por un núcleo físico, las peticiones esperan turno: dentro del servidor el REST p95 es 442 ms, y visto por el usuario 1.178 ms. La diferencia es la cola antes de que Node lea la petición.
-- **El contenedor de 2 CPU pasa igual que el PC:** con 2 CPU de cuota, las ráfagas de login y el hilo principal caben en el periodo (21 ms/s de frenado).
-- Disco y red no influyen en ningún entorno: %util promedio entre 2,7 y 4 %, iowait < 1 %.
+- **AWS gasta unas 2,5-2,7 veces más CPU por el mismo trabajo.** El login, que siempre hace el mismo cálculo scrypt, cuesta 136 ms en el PC y 298 ms en AWS. El hilo de JavaScript hace el mismo trabajo y sube de 18 % a 45 %.
+- **La red casi no explica nada:** el ping p50 en AWS es de 0,5 ms frente a 0,1-0,2 ms locales. La diferencia en REST viene principalmente de la CPU, como muestra la columna "servidor".
+- **Docker es casi igual al PC.** Con el mismo procesador, su hilo de JS cuesta algo más por mensaje, probablemente por la red del contenedor. No se aisló esa causa.
+- **Limited y Unlimited son iguales aquí, pero por razones distintas según la carga.** Con 100 y 300 usuarios (6 % y 15 % de la máquina), Limited está por debajo de su base de 20 %. Con 600 (27 %) está por encima y pasa gastando los créditos que ganó en las pruebas anteriores: el resultado no demuestra que los sostenga indefinidamente.
 
-### 2.3 Carga alta: 600 usuarios, 2 entradas por segundo, sesiones de 5 minutos
+### 2.2 Capacidad: 1.000, 2.000 y 3.000 usuarios
 
-| | PC | Cont. 1 CPU | Cont. 2 CPU | AWS |
-|---|---|---|---|---|
-| Resultado | ✓ | ✕ (cortada a los 67 s) | ✕ | ✕ (cortada a los 94 s) |
-| Hilo JS (promedio / pico) | **75 / 102 %** | 18 / 22 % | **93 / 103 %** | – |
-| REST p95 / p99 | 60 / 186 ms | 14.491 ms | 2.791 / 5.653 ms | 13.398 ms |
-| Trazo a los demás p99 | 49 ms | 654 ms | 680 ms | 218 ms |
-| Ping p99 | 73 ms | 735 ms | 1.225 ms | 425 ms |
-| CPU de la máquina | 18 % | 13 % | 25 % | **100 %** (93,5 us, 0 id) |
-| Contenedor frenado | – | **4.131 ms/s** | 181 ms/s | – |
-| RES del servidor (pico) | 300 MB | 250 MB | 303 MB | 267 MB |
-
-**Qué explica la diferencia:**
-
-- Esta prueba tiene el mismo ritmo de login que la media, pero 2,5 veces más usuarios conectados: **el costo nuevo es el tiempo real**. Los clientes reciben 59.000 mensajes por segundo. Cada uno es un `JSON.stringify` y un `socket.send` que hace el **único hilo de JavaScript**.
-- **En el PC pasa al límite:** el hilo de JavaScript está al 75 % promedio y toca el 102 % en picos, y el ping p99 llega a 73 ms (el límite es 100). Mientras tanto la máquina tiene el 81 % de la CPU libre: ese trabajo no se puede repartir, porque Node ejecuta todo el JavaScript en un solo hilo.
-- **El contenedor de 2 CPU falla con la misma carga que el PC pasa.** Su hilo de JavaScript sube al 93 % y además el kernel lo frena 181 ms por segundo. Con una utilización tan cerca de 1, cualquier pausa hace crecer la cola más rápido de lo que se vacía (teoría de colas: la espera crece como ρ/(1−ρ); con ρ = 0,93 la espera media es 13 veces el tiempo de servicio, con ρ = 0,75 es 3 veces). El REST p95 pasa de 60 ms a 2,8 s.
-- **El contenedor de 1 CPU y AWS caen antes de medir:** la llegada de 600 usuarios en 120 s son 5 logins por segundo, más de lo que una CPU puede hashear mientras atiende el tiempo real. Los logins hacen fila hasta el tiempo límite de 15 s y el laboratorio corta la prueba por errores.
-- La memoria no es el límite: el servidor usa como máximo 303 MB de los 512 MB del contenedor.
-
-### 2.4 Server killer: 6.000 usuarios, 20 entradas por segundo
-
-| | PC | Cont. 1 CPU | Cont. 2 CPU | AWS |
-|---|---|---|---|---|
-| Duró hasta el corte | 95 s | 26 s | 44 s | 26 s |
-| Usuarios conectados al corte | 342 | 43 | 121 | 42 |
-| Error dominante | `login:TIMEOUT` | `login:TIMEOUT` | `login:TIMEOUT` | `login:TIMEOUT` |
-| libuv (threadpool) | **393 %** (4 hilos llenos) | 79 % | 155 % | — |
-| CPU de la máquina idle | **57 %** | 88 % | 83 % | 9 % |
-| Login dentro del servidor p50 | 735 ms | 581 ms | 680 ms | 860 ms |
-| Login visto por el usuario p50 | 6.878 ms | 7.737 ms | 7.737 ms | 8.368 ms |
+| | PC | Cont. 1 CPU | Cont. 2 CPU | AWS Unlimited | AWS Limited (sin créditos) |
+|---|---|---|---|---|---|
+| **1.000**: resultado | ✓ | ✓ | ✓ | ✓ | ✕ |
+| Conectados / hilo JS | 960 / 29 % | 959 / 33 % | 963 / 33 % | 976 / 74 % | 628 / 90 % |
+| Ping p99 / errores | 2,1 ms / 0 % | 22 ms / 0 % | 2,6 ms / 0 % | 53 ms / 0 % | 3,7 s / 80,5 % |
+| **2.000**: resultado | ✓ | ✕ | ✓ | ✕ | ✕ |
+| Conectados / hilo JS | 1.921 / 51 % | 1.901 / 69 % | 1.856 / 75 % | 1.879 / 97 % | 746 / 86 % |
+| Ping p99 / errores | 5,9 ms / 0 % | 227 ms / 0 % | 65 ms / 0 % | 1,05 s / 15,5 % | 2,9 s / ~100 % |
+| **3.000**: resultado | ✓ | ✕ | ✕ cayó a los 332 s | ✕ | ✕ |
+| Conectados / hilo JS | 2.825 / 79 % | 2.427 / 84 % | – | 2.119 / 96 % | 673 / 79 % |
+| Ping p99 / errores | 47 ms / 0 % | 1,2 s / 63,4 % | – | 1,43 s / 50,9 % | 2,6 s / ~100 % |
 
 **Qué explica la diferencia:**
 
-- En los cuatro entornos se rompe **lo mismo, el login**, y en el mismo orden: la fila de scrypt crece hasta que las peticiones superan los 15 s.
-- **El PC muere con el 57 % de la CPU libre.** El threadpool de libuv tiene 4 hilos por defecto (`UV_THREADPOOL_SIZE=4`) y están al 393 %, es decir, llenos. Cada login ocupa un hilo ~135 ms, así que la capacidad máxima es de 4 / 0,135 ≈ **30 logins por segundo**. La llegada inicial de Server killer es de 50 por segundo: la fila crece 20 por segundo y nunca se vacía. Es un límite del **software** (el tamaño del pool), no del hardware.
-- Dentro del servidor el login tarda 0,6 a 0,9 s, pero el usuario espera 7 a 8 s: la diferencia es el tiempo en la fila del threadpool y del *backlog* TCP, antes de que el cálculo empiece.
-- En los contenedores y en AWS la fila crece antes porque hay menos CPU para el threadpool: con 1 CPU de cuota, los 4 hilos se reparten 100 ms por periodo.
+- **La capacidad sigue la velocidad del hilo de JavaScript.** Con el hilo cerca del 75-80 %, el PC atiende 2.825 usuarios, el contenedor de 2 CPU 1.856 y AWS Unlimited 976.
+- **El contenedor de 1 CPU falla con 2.000 por la cuota, no por falta de hardware.** La máquina está al 19 % de uso, sin errores REST. El kernel lo frena 128 ms por segundo y el ping p99 sube a 227 ms. Con 2 CPU, el freno baja a 16 ms/s y la misma carga pasa.
+- **El contenedor de 2 CPU cae con 3.000 por memoria.** Con 512 MB, V8 limita su heap a cerca de la mitad del contenedor. AWS Unlimited no cae en esa carga porque no tiene ese límite, aunque ya está saturado de CPU.
+- **Limited sin créditos no llega ni a 1.000.** Con steal de 60-71 %, la CPU útil queda en 16-19 % de la máquina. Se estabiliza en ~630-750 conectados, pero con casi todas las peticiones fallando, así que esa cifra **no** es su capacidad sostenida. Por proyección lineal desde los ~27 % que usa con 600 usuarios, estaría en unos 400-450; no se midió.
+
+### 2.3 Server killer: 6.000 usuarios
+
+| | PC | Cont. 1 CPU | Cont. 2 CPU | AWS Unlimited | AWS Limited |
+|---|---|---|---|---|---|
+| Se cayó | **0/3** | 3/3 | 3/3 | 3/3 | **0/3** |
+| Momento | – | 52-77 s | 55-88 s | 464-680 s | – |
+| Causa | Hilo JS saturado | Heap de V8 con 512 MB | Heap de V8 con 512 MB | OOM del kernel, RAM de la máquina | CPU recortada |
+| Conectados | ~4.130 | – | – | 1.240-2.240 | ~1.370 |
+| Hilo JS | 99 % | – | – | 86-92 % antes de caer | 89 % |
+| Memoria del servidor (pico) | 816 MB | – | – | ~690-750 MB | 590-660 MB |
+| Ping p99 | ~1 s | – | – | 1,1-5,2 s | ~10,6 s |
+| Steal | 0 % | – | – | ~0,1 % | ~60 % |
+
+**Qué explica la diferencia:**
+
+- **Cada entorno se rompe por algo distinto.** El PC agota el hilo, los contenedores el heap, AWS Unlimited la RAM y AWS Limited los créditos.
+- **El PC no cae porque no tiene tope de memoria cercano** (15 GB), pero tampoco atiende a todos: 38 % de errores REST, sobre todo al unirse y listar por tiempo de espera.
+- **AWS Unlimited** sostiene mejor el tiempo real que Limited, pero se queda sin RAM: servidor ~690 MB + MongoDB ~700 MB de 1,9 GB. En una repetición el kernel mató primero a MongoDB, que Docker reinició en unos 2 s, y el servidor cayó después.
+- **AWS Limited no cae, pero no es utilizable.** El recorte llega en el minuto 2-3 y limita a la gente que entra, así que la memoria se queda por debajo de lo que mata a Unlimited. Es una explicación coherente con los datos, no un mecanismo probado por separado.
 
 ---
 
 ## 3. Costo frente a capacidad
 
-| Opción | Costo mensual | Carga más alta que pasa | Usuarios activos que sostiene | Costo por usuario activo al mes |
-|---|---|---|---|---|
-| PC nativo | ~17.600 COP de energía + amortización del equipo | **Alta** | 600 | Energía: ~29 COP |
-| Contenedor 1 CPU (≈ Render Standard) | USD 25 | Baja | 120 | USD 0,21 |
-| Contenedor 2 CPU (≈ Render Pro) | USD 85 | Media | 240 | USD 0,35 |
-| AWS t3.small | USD 20,43 | Ninguna (la baja falló por 45 ms en el p95 del registro) | < 120 | — |
+| Opción | Costo mensual | Carga más alta que pasa | Costo por usuario activo al mes |
+|---|---|---|---|
+| PC nativo | ~17.600 COP de energía + amortización | 3.000 | Energía: ~6 COP |
+| Contenedor 2 CPU (≈ Render Pro) | USD 85 | 2.000 | USD 0,04 |
+| Contenedor 1 CPU (≈ Render Standard) | USD 25 | 1.000 | USD 0,03 |
+| AWS Unlimited | USD 20,43 + excedente | 1.000 | ~USD 0,02-0,04 |
+| AWS Limited | USD 20,43 | 300 sostenidos (600 con créditos) | USD 0,07 |
+
+El excedente de Unlimited es una **estimación** con USD 0,05 por vCPU-hora, usando la CPU medida por encima de la base de 0,4 vCPU, si esa carga durara las 730 horas del mes:
+
+- Con 600 usuarios: (0,54 − 0,40) × 0,05 × 730 ≈ USD 5/mes.
+- Con 1.000 usuarios: (0,96 − 0,40) × 0,05 × 730 ≈ USD 20/mes.
+
+Una carga real tiene horas valle, así que el excedente sería menor. Limited con reserva de créditos también podría absorber picos cortos (acumula hasta 576 créditos).
 
 Lectura:
 
-- El **PC** da la mayor capacidad porque tiene 4 núcleos físicos rápidos dedicados. No es una opción de producción: sin IP fija, sin disponibilidad 24/7, sin redundancia.
-- La **t3.small** es la más barata, pero su CPU es un solo núcleo físico a 2,5 GHz y no alcanza para el costo del login a 1 entrada por segundo.
-- **Doblar la cuota del contenedor dobla la capacidad** (de baja a media), pero no llega a la alta: ahí el límite es el hilo único de JavaScript, que no mejora con más CPU de cuota.
+- **El PC** tiene la mayor capacidad, pero no es una opción de producción: sin IP fija, disponibilidad 24/7 ni redundancia.
+- **La t3.small es la opción más económica y sostiene la carga de referencia de 300 usuarios.** Para esa carga, Limited basta.
+- **Doblar la cuota del contenedor dobla la capacidad** (de 1.000 a 2.000), pero un mes cuesta más del triple según los planes comparados.
 
 La recomendación y lo que se descartó están en [CONCLUSIONES.md](CONCLUSIONES.md).
 
 ---
 
-## Fuentes de precios
+## Fuentes
 
-- AWS EC2 On-Demand, us-east-1: [aws.amazon.com/ec2/pricing/on-demand](https://aws.amazon.com/ec2/pricing/on-demand/) (t3.small USD 0,0208/h, t3.micro USD 0,0104/h); también [DoIT](https://www.doit.com/compute/spot/us-east-1/t3.small) y [Holori](https://calculator.holori.com/aws/ec2/t3.small/us-east-1)
+- AWS EC2 On-Demand, us-east-1: [aws.amazon.com/ec2/pricing/on-demand](https://aws.amazon.com/ec2/pricing/on-demand/) (t3.small USD 0,0208/h, t3.micro USD 0,0104/h)
+- Créditos de CPU y modo Unlimited: [AWS, instancias de rendimiento ampliable](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances-unlimited-mode.html), [conceptos de créditos](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-credits-baseline-concepts.html)
 - AWS EBS gp3 (USD 0,08 por GB-mes): [aws.amazon.com/ebs/pricing](https://aws.amazon.com/ebs/pricing/)
 - AWS IPv4 pública (USD 0,005 por hora): [AWS News Blog](https://aws.amazon.com/blogs/aws/new-aws-public-ipv4-address-charge-public-ip-insights/)
 - Ancho de banda base de t3.small (0,128 Gbps): [AWS, instancias de uso general](https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html#gp_network)
 - Render: [render.com/docs/compute-plans](https://render.com/docs/compute-plans) (Standard USD 25, Pro USD 85)
 - Tarifa de energía Enel Colombia, agosto de 2026: [pliego tarifario](https://www.enel.com.co/content/dam/enel-co/español/personas/1-17-1/2026/pliego%20tarifario%20digital%20_agosto_2026.pdf)
-- Intel Core Ultra 5 125H (potencia base 28 W, caché 18 MB): [ark.intel.com](https://www.intel.com/content/www/us/en/products/sku/236847/intel-core-ultra-5-processor-125h-18m-cache-up-to-4-50-ghz/specifications.html)
+- Intel Core Ultra 5 125H (potencia base 28 W): [ark.intel.com](https://www.intel.com/content/www/us/en/products/sku/236847/intel-core-ultra-5-processor-125h-18m-cache-up-to-4-50-ghz/specifications.html)

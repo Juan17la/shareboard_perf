@@ -2,9 +2,7 @@
 
 Define qué hace cada usuario virtual, cómo se reparten los endpoints, qué números usa cada nivel y cómo se garantiza que el trabajo sea constante.
 
-Archivos que lo definen: `telemetry/profiles/flujo.json` (comportamiento), `telemetry/profiles/{2-baja,3-media,4-alta,5-server-killer}.json` (niveles), `telemetry/lib/rooms.mjs` (planificador) y `telemetry/vu-worker.mjs` (el usuario).
-
-> **Estado de los datos.** Este modelo reemplaza al anterior (sesiones de 2 a 5 minutos con 95 % de logins). Las tablas de [MEDICIONES.md](MEDICIONES.md), [COMPARACIONES.md](COMPARACIONES.md) y [CONCLUSIONES.md](CONCLUSIONES.md) siguen siendo del modelo anterior hasta repetir la campaña.
+Archivos que lo definen: `telemetry/profiles/flujo.json` (comportamiento), `telemetry/profiles/{2-baja,3-media,4-alta,4a,4b,4c-capacidad-*,5-server-killer}.json` (niveles), `telemetry/lib/rooms.mjs` (planificador) y `telemetry/vu-worker.mjs` (el usuario).
 
 ## 1. Qué pide el proyecto y cómo se cumple
 
@@ -92,7 +90,7 @@ La siguiente actividad depende de la actual y del rol (cadena de Markov en `fluj
 | Borrando | Un borrado | 1 s |
 | En otra pestaña | Solo ping | 60 s |
 
-Eventos de fondo: la red se cae cada ~20 min y el socket reconecta con el mismo token, sin REST; quien tiene cuenta vuelve a abrir su lista cada ~12 min.
+Eventos de fondo: la red se cae cada ~20 min y el socket reconecta con el mismo token, sin REST; quien tiene cuenta vuelve a abrir su lista cada ~20 min.
 
 Frecuencias tomadas del cliente real: `web/src/lib/config.ts`. **Los porcentajes de salas, caminos y actividades son supuestos de diseño**: no hay datos públicos de este tipo de app. La mejor calibración es grabar 2 o 3 sesiones reales y ajustar `flujo.json`.
 
@@ -112,6 +110,8 @@ Usuarios al mes se calcula con la guía de k6 y BlazeMeter: sesiones en hora pic
 | Usuarios al mes equivalentes | ~10.000 | ~20.000 | ~40.000 | ~400.000 |
 | Representa | Una facultad o un colegio | Una universidad mediana | Una universidad grande | La alta ×10, sostenida |
 
+Entre la alta y el Server killer hay tres pruebas de **capacidad**, iguales salvo por los usuarios: 1.000, 2.000 y 3.000, con 1 repetición cada una. Las demás tienen 3.
+
 Con 100 usuarios hay menos clases: una sala de 30 movería demasiado la carga, y el planificador no abre salas que pasen mucho del objetivo. Por eso la sesión media baja un poco en ese nivel.
 
 Las cifras son de la simulación (la corrida de carga media tuvo 14,8 llegadas por minuto); cada corrida reporta las reales en el panel «Los 5 endpoints».
@@ -128,7 +128,7 @@ Las cifras son de la simulación (la corrida de carga media tuvo 14,8 llegadas p
 
 La memoria tarda más que el resto en estabilizarse: los tableros sin nadie salen de memoria a los 5 minutos, así que RES sigue subiendo unos minutos hasta aplanarse. Es comportamiento del servidor, no carga que crece.
 
-Los tableros de la semilla tienen tamaños distintos, como los reales: mediana 80, p90 ~500 y p99 ~2.800 elementos, de cuatro tipos (70 % trazos, 20 % figuras, casi 10 % textos, 0,3 % imágenes). Cada sala toma uno libre, así que los tableros también se cargan en frío durante la prueba.
+Los tableros de la semilla tienen tamaños distintos, como los reales: mediana 80, p90 ~500 y p99 ~2.400-2.800 elementos, de cuatro tipos (70 % trazos, 20 % figuras, casi 10 % textos, 0,3 % imágenes). Cada sala toma uno libre, así que los tableros también se cargan en frío durante la prueba.
 
 Límites por IP desactivados: toda la carga sale de una sola máquina. En producción son 10 logins por minuto por IP, un límite que 30 estudiantes detrás de la misma IP sí pueden alcanzar.
 

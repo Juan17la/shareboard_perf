@@ -13,7 +13,7 @@ services:
       context: ${SERVER_DIR:-../../server}
       # Antes: npm run build (el laboratorio lo hace solo).
       dockerfile_inline: |
-        FROM node:22-slim
+        FROM node:24-slim
         WORKDIR /app
         COPY package.json package-lock.json ./
         RUN npm ci --omit=dev
@@ -31,6 +31,9 @@ services:
       LOGIN_PER_MINUTE: "1000000"
       CREATE_BOARD_PER_HOUR: "1000000"
       PIN_PER_MINUTE: "1000000"
+      WORKERS: "${SERVER_WORKERS:-1}"
+      BROADCAST_FLUSH_MS: "${BROADCAST_FLUSH_MS:-25}"
+      WRITE_DELAY_MS: "${WRITE_DELAY_MS:-1000}"
     # El techo que estamos estudiando. cpus=1: 100 ms de CPU cada 100 ms; si los gasta antes, el kernel lo frena.
     cpus: "${SERVER_CPUS:-1}"
     mem_limit: "${SERVER_MEM:-512m}"

@@ -4,7 +4,7 @@
 import { randomBytes, scryptSync } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-const VERSION = 2;
+const VERSION = 3; // 3: las cuentas se registran con el servidor actual (Argon2id en Node 24.7+)
 const PASSWORD = 'carga-shareboard-2026';
 const BOARDS = 2000; // suficiente para Server killer: ~1.700 salas a la vez
 const DAY = 86_400_000;

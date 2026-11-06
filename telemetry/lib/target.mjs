@@ -119,6 +119,7 @@ const health = async (base) => (await fetch(`${base}/health`, { signal: AbortSig
 // ---------- el objetivo local ----------
 export function localTarget({ token, log, bind = '127.0.0.1' }) {
   let mode = null;
+  let workers = 1;
   let serverChild = null;
   let agentChild = null;
   let seed = null;
@@ -130,6 +131,7 @@ export function localTarget({ token, log, bind = '127.0.0.1' }) {
     SERVER_CPUSET: CORES ? list(CORES.server) : `0-${cpus().length - 1}`,
     SERVER_CPUS: String(MODES[mode]?.cpus ?? 1),
     SERVER_MEM: MODES[mode]?.mem ?? '512m',
+    SERVER_WORKERS: String(workers),
     SERVER_DIR: SERVER,
     SERVER_PORT: String(SERVER_PORT),
   });
@@ -174,7 +176,8 @@ export function localTarget({ token, log, bind = '127.0.0.1' }) {
     const child = serverChild;
     serverChild = null;
     child.kill('SIGTERM');
-    for (let i = 0; i < 50 && child.exitCode == null && child.signalCode == null; i++) await sleep(100);
+    // Con WORKERS, el primario espera a que cada proceso guarde sus tableros.
+    for (let i = 0; i < 200 && child.exitCode == null && child.signalCode == null; i++) await sleep(100);
     if (child.exitCode == null && child.signalCode == null) child.kill('SIGKILL');
   }
 
@@ -201,6 +204,9 @@ export function localTarget({ token, log, bind = '127.0.0.1' }) {
           LOGIN_PER_MINUTE: '1000000',
           CREATE_BOARD_PER_HOUR: '1000000',
           PIN_PER_MINUTE: '1000000',
+          WORKERS: String(workers),
+          ...(process.env.BROADCAST_FLUSH_MS ? { BROADCAST_FLUSH_MS: process.env.BROADCAST_FLUSH_MS } : {}),
+          ...(process.env.WRITE_DELAY_MS ? { WRITE_DELAY_MS: process.env.WRITE_DELAY_MS } : {}),
         },
       });
       closeSync(fd);
@@ -280,10 +286,14 @@ export function localTarget({ token, log, bind = '127.0.0.1' }) {
     },
     serverUrl,
     agentUrl: `http://127.0.0.1:${AGENT_PORT}`,
-    async prepare(m) {
+    get workers() {
+      return workers;
+    },
+    async prepare(m, nWorkers = 1) {
       if (!MODES[m]) throw new Error(`Modo desconocido: ${m}`);
       mode = m;
-      log(`▸ Preparando: ${MODES[m].label}`);
+      workers = nWorkers;
+      log(`▸ Preparando: ${MODES[m].label}${workers > 1 ? `, ${workers} procesos de Node` : ''}`);
       if (CORES) log(`Núcleos: servidor ${list(CORES.server)} · generador ${list(CORES.gen)} · agente ${list(CORES.agent)}`);
       await build();
       await mongo();

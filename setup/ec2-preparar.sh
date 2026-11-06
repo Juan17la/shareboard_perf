@@ -7,6 +7,8 @@
 #   servidor  -> Docker + MongoDB + servidor Shareboard + agente (laboratorio en modo --target-only)
 #   generador -> laboratorio con la interfaz web (genera la carga)
 #
+# WORKERS=n antes de "bash" fija los procesos de Node del servidor (por defecto 1).
+#
 # Clona (o actualiza) el repo en ~/shareboard_perf y deja el laboratorio corriendo en tmux ("lab").
 # Volver a ejecutarlo es seguro: actualiza el código y reinicia el laboratorio.
 set -euo pipefail
@@ -36,13 +38,13 @@ if (( MEM_MB < 1500 )) && ! swapon --show | grep -q swapfile; then
   sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile
 fi
 
-echo "== 2/4 Node 22 =="
+echo "== 2/4 Node 24 =="
 export NVM_DIR="$HOME/.nvm"
 [[ -s "$NVM_DIR/nvm.sh" ]] || curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash >/dev/null
 # shellcheck disable=SC1091
 . "$NVM_DIR/nvm.sh"
-nvm install 22 >/dev/null
-NODE="$(nvm which 22)"
+nvm install 24 >/dev/null
+NODE="$(nvm which 24)"
 "$NODE" --version
 
 echo "== 3/4 Código =="
@@ -60,7 +62,7 @@ cd "$DIR"
 if [[ "$ROL" == "servidor" ]]; then
   TOKEN="${TOKEN:-$(head -c 9 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
   # sg docker: usa el grupo docker sin cerrar la sesión.
-  tmux new-session -d -s lab "sg docker -c 'ulimit -n 65535; $NODE telemetry/lab.mjs --target-only --token $TOKEN 2>&1 | tee -a $HOME/lab.log'"
+  tmux new-session -d -s lab "sg docker -c 'ulimit -n 65535; $NODE telemetry/lab.mjs --target-only --token $TOKEN --workers ${WORKERS:-1} 2>&1 | tee -a $HOME/lab.log'"
   echo "Preparando MongoDB, servidor y datos de prueba (3 a 6 minutos)…"
   until grep -qE "Listo\. En el PC|ERROR" "$HOME/lab.log"; do sleep 3; done
   if grep -q ERROR "$HOME/lab.log"; then grep ERROR "$HOME/lab.log"; exit 1; fi

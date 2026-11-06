@@ -103,7 +103,8 @@ function findPid(spec) {
     try {
       exe = basename(readlinkSync(`/proc/${d}/exe`));
     } catch {
-      exe = read(`/proc/${d}/comm`)?.trim(); // procesos de otro usuario (p. ej. mongod en Docker)
+      exe = read(`/proc/${d}/comm`)?.trim(); // procesos de otro usuario (p. ej. mongod o el servidor en Docker)
+      if (exe === 'MainThread') exe = 'node';
     }
     if (exe !== comm) continue;
     const cmd = read(`/proc/${d}/cmdline`)?.replaceAll('\0', ' ') ?? '';
@@ -180,6 +181,39 @@ function readProc(pid, perThread = true) {
     fds,
     cgroup: read(`/proc/${pid}/cgroup`)?.match(/^0::(.*)$/m)?.[1] ?? null,
   };
+}
+
+// Con WORKERS, el servidor es un primario y sus hijos. Importan la CPU y la memoria de todos,
+// pero el límite es el hilo de JavaScript más ocupado: un promedio escondería al que se satura.
+function readServer(pid) {
+  const primary = readProc(pid);
+  if (!primary) return null;
+  const kids = (read(`/proc/${pid}/task/${pid}/children`) ?? '').trim().split(/\s+/).filter(Boolean).map((k) => readProc(Number(k))).filter(Boolean);
+  if (!kids.length) return primary;
+  const all = [primary, ...kids];
+  const sum = (key) => all.reduce((t, p) => (p[key] == null ? t : (t ?? 0) + p[key]), null);
+  const threads = {};
+  for (const kid of kids) {
+    for (const [name, ticks] of Object.entries(kid.threads)) {
+      const key = name === 'main' ? `main#${kid.pid}` : name;
+      threads[key] = (threads[key] ?? 0) + ticks;
+    }
+  }
+  return { ...primary, ticks: sum('ticks'), threads, nThreads: sum('nThreads'), rssMB: r1(sum('rssMB')), readBytes: sum('readBytes'), writeBytes: sum('writeBytes'), fds: sum('fds') };
+}
+
+function serverRates(a, b, dt) {
+  const rates = procRates(a, b, dt);
+  if (!rates) return null;
+  const mains = Object.keys(rates.threads).filter((k) => k.startsWith('main#'));
+  if (!mains.length) return rates;
+  rates.mainPerWorker = mains.map((k) => rates.threads[k]);
+  rates.threads.main = Math.max(...rates.mainPerWorker);
+  for (const k of mains) delete rates.threads[k];
+  rates.workers = rates.mainPerWorker.length;
+  // Un hijo reiniciado resta sus ticks a la suma: ese segundo no dice nada de la CPU.
+  if (rates.cpu != null && rates.cpu < 0) rates.cpu = null;
+  return rates;
 }
 
 function procRates(a, b, dt) {
@@ -361,6 +395,9 @@ const pending = new Map();
 let srvHist = {};
 let srvErrors = 0;
 
+// Cada proceso numera sus peticiones desde cero: el id solo es único junto con el pid.
+const requestKey = (line, reqId) => `${/"pid":(\d+)/.exec(line)?.[1]}:${reqId}`;
+
 function tailLog() {
   if (!args.log) return;
   try {
@@ -380,12 +417,13 @@ function tailLog() {
     for (const line of lines) {
       if (line.includes('"incoming request"')) {
         const m = reIn.exec(line);
-        if (m) pending.set(m[1], routeOf(m[2], m[3]));
+        if (m) pending.set(requestKey(line, m[1]), routeOf(m[2], m[3]));
       } else if (line.includes('"responseTime"')) {
         const m = reOut.exec(line);
         if (!m) continue;
-        const route = pending.get(m[1]);
-        pending.delete(m[1]);
+        const key = requestKey(line, m[1]);
+        const route = pending.get(key);
+        pending.delete(key);
         if (!route) continue;
         histAdd((srvHist[route] ??= {}), Number(m[3]));
         if (Number(m[2]) >= 500) srvErrors++;
@@ -453,7 +491,7 @@ async function sample() {
   const cur = {
     at: now,
     stat: readStat(),
-    server: readProc(serverPid),
+    server: readServer(serverPid),
     mongo: readProc(mongoPid, false),
     disks: readDisks(),
     net: readNet(),
@@ -485,7 +523,7 @@ async function sample() {
     coresIowait: cur.stat.cores.map((c, i) => cpuPct(prev.stat.cores[i], c).iowait),
     run: { running: cur.stat.running, blocked: cur.stat.blocked, load1: Number((read('/proc/loadavg') ?? '0').split(' ')[0]) },
     mem: readMem(),
-    server: procRates(prev.server, cur.server, dt),
+    server: serverRates(prev.server, cur.server, dt),
     mongo: procRates(prev.mongo, cur.mongo, dt),
     cgroup: cgroupRates(prev.cg, cur.cg, dt),
     mongoCgroup: cgroupRates(prev.mcg, cur.mcg, dt),

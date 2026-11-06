@@ -319,6 +319,7 @@ export function validateElement(input: unknown): BoardElement {
         from: point(input.from, 'from'),
         to: point(input.to, 'to'),
         stroke: color(input.stroke, 'stroke'),
+        ...(input.textColor != null ? { textColor: color(input.textColor, 'textColor') } : null),
         strokeWidth: inRange(
           num(input.strokeWidth, 'strokeWidth'),
           LIMITS.minStrokeWidth,
@@ -419,7 +420,7 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
 const OPTIONAL = new Set([
   'group', 'rotation', 'opacity', 'fill', 'text', 'fontSize', 'sides', 'font', 'headStart', 'headEnd',
   'route', 'bend', 'dash', 'rounded', 'align', 'valign', 'vertices', 'fromLink', 'toLink', 'deleted', 'bold', 'italic', 'underline', 'width', 'labelAt',
-  'startAxis', 'endAxis', 'curveFrom', 'curveTo', 'locked', 'sticky',
+  'startAxis', 'endAxis', 'curveFrom', 'curveTo', 'locked', 'sticky', 'textColor',
 ]);
 const REQUIRED = new Set([
   'z', 'height', 'points', 'color', 'stroke', 'strokeWidth', 'from', 'to', 'at', 'shape', 'uri',
@@ -465,6 +466,7 @@ export function validatePatch(raw: Record<string, unknown>): Partial<BoardElemen
         break;
       case 'color':
       case 'stroke':
+      case 'textColor':
       case 'fill':
         out[key] = color(v, key);
         break;

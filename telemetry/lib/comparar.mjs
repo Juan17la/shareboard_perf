@@ -130,12 +130,12 @@ export function summarizeRun(text, env, file) {
 }
 
 const cache = new Map();
-export async function loadRuns() {
+export async function loadRuns(dirs = ENV_DIRS, accept = () => true) {
   const runs = [];
-  for (const [env, dir] of Object.entries(ENV_DIRS)) {
+  for (const [env, dir] of Object.entries(dirs)) {
     if (!existsSync(dir)) continue;
     for (const file of readdirSync(dir).sort()) {
-      if (!file.endsWith('.ndjson')) continue;
+      if (!file.endsWith('.ndjson') || !accept(file, env)) continue;
       const path = join(dir, file);
       const { mtimeMs } = statSync(path);
       if (cache.get(path)?.mtimeMs !== mtimeMs) {
@@ -183,4 +183,26 @@ export function removeAws(file, env) {
   const dir = awsDir(env);
   if (!file.match(/^[\w-]+_[a-z0-9-]+\.ndjson$/) || !isUploaded(file, env)) throw new Error('nombre de archivo no válido');
   rmSync(join(dir, file), { force: true });
+}
+
+// Página Antes/Después: «antes» son las campañas ya guardadas; «después» la repetición con el servidor mejorado.
+// Las locales se leen directo de data/raw (solo las posteriores a AFTER_FROM); las de AWS se copian a resultados/2026-11-07/.
+const AFTER_FROM = '20261106-220000';
+const RAW = fileURLToPath(new URL('../../data/raw', import.meta.url));
+const AFTER_DIR = join(RESULTS, '2026-11-07');
+const LOCAL = { pc: 'pc', 'docker-1cpu': 'docker-1cpu', 'docker-2cpu': 'docker-2cpu' };
+export async function loadBeforeAfter() {
+  const before = await loadRuns();
+  const local = await loadRuns(Object.fromEntries(Object.keys(LOCAL).map((e) => [e, RAW])), (f, env) => f.includes(`_${env}_`) && f >= AFTER_FROM);
+  const aws = await loadRuns(Object.fromEntries(AWS_ENVS.map((e) => [e, join(AFTER_DIR, e)])));
+  // Comparación justa: «después» lleva tantas repeticiones como «antes» (las primeras). Sin esto el PC sumaba
+  // corridas de la fase de docker1 que en realidad corrieron otra vez en el PC (campana.mjs ya no lo permite).
+  const seen = new Map();
+  const after = [...local, ...aws].sort((x, y) => x.file.localeCompare(y.file)).filter((r) => {
+    const k = `${r.env}|${r.test}`;
+    const n = (seen.get(k) ?? 0) + 1;
+    seen.set(k, n);
+    return n <= before.filter((b) => b.env === r.env && b.test === r.test).length;
+  });
+  return { before, after };
 }

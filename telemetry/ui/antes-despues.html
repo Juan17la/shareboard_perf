@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Antes y después</title>
+  <link rel="stylesheet" href="vendor/uPlot.min.css">
+  <link rel="stylesheet" href="app.css">
+  <style>
+    .controls { position: sticky; top: 53px; z-index: 4; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+    .controls .label { font-size: 12px; color: var(--muted); margin-right: 6px; }
+    .controls > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .env-toggle i, .lg i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+    .env-toggle[aria-pressed="false"] { opacity: .55; text-decoration: line-through; }
+    .card-gap { margin-top: 12px; }
+    .matrix th, .matrix td { text-align: center; vertical-align: top; }
+    .matrix th:first-child, .matrix td:first-child { text-align: left; }
+    .matrix td.now, .matrix th.now { background: var(--bg); }
+    .matrix small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 2px; }
+    .matrix td { min-width: 96px; }
+    .mini { border: 0; background: none; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; padding: 2px 4px; }
+    .mini.remove { color: var(--muted); }
+    .mini:hover { text-decoration: underline; }
+    .aws-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 10px; font-size: 13px; color: var(--text-2); }
+    .aws-msg { white-space: pre-line; }
+    .aws-msg.error { color: var(--critical); }
+    .section-title { margin: 22px 0 8px; }
+    .section-title p { margin: 0; font-size: 13px; color: var(--text-2); max-width: 90ch; }
+    .section-title h2 { margin: 0 0 2px; }
+    .chart { width: 100%; }
+    .chart svg { display: block; width: 100%; overflow: visible; }
+    .chart text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .lg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--text-2); margin-top: 6px; }
+    .pies { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+    .pie { text-align: center; font-size: 12.5px; color: var(--text-2); }
+    .pie svg { display: block; margin: 0 auto 4px; width: 100%; max-width: 140px; height: auto; }
+    .pie-down { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; max-width: 140px; margin: 0 auto 4px; border: 1px dashed var(--border); border-radius: 50%; color: var(--critical); font-weight: 600; }
+    #tip { position: fixed; z-index: 9; max-width: 280px; padding: 6px 9px; border-radius: 6px; background: var(--text); color: var(--surface); font-size: 12px; pointer-events: none; white-space: pre-line; font-variant-numeric: tabular-nums; }
+    .data-table td small { color: var(--muted); margin-left: 4px; }
+    .data-table th:not(:first-child) { text-align: right; }
+    .guide ul { margin: 10px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-2); max-width: 90ch; }
+    .guide li { margin-bottom: 5px; }
+    .empty { padding: 24px; text-align: center; color: var(--muted); }
+    @media (max-width: 760px) { .controls { position: static; } }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l5-6 4 4 4-7 5 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <strong>Antes y después de las mejoras</strong>
+    </div>
+    <nav class="tabs"><a class="navlink" href="./">Laboratorio</a><a class="navlink" href="comparar.html">Comparar entornos</a></nav>
+  </header>
+
+  <main>
+    <div class="controls">
+      <div id="tests" role="group" aria-label="Carga que se compara"></div>
+      <div id="envs" role="group" aria-label="Entornos que se muestran"></div>
+    </div>
+
+    <div class="card card-gap">
+      <div class="card-h"><h3>¿Quién aguanta qué? <span class="unit">repeticiones que pasan / total · gris = servidor anterior, color = servidor mejorado</span></h3></div>
+      <div class="table-wrap"><table class="matrix" id="matrix"></table></div>
+      <div class="aws-bar" hidden>
+        <button class="btn" id="aws-add-unlimited">Añadir a AWS Unlimited</button>
+        <button class="btn" id="aws-add-limited">Añadir a AWS Limited</button>
+        <input id="aws-file" type="file" accept=".ndjson" multiple hidden>
+        <span>Las corridas de la campaña ya están incluidas. Para sumar otras, elige el modo de créditos con el que se midieron y sube los <code>.ndjson</code> que descargas en Resultados. Cada archivo entra en la carga que le corresponde y las repeticiones se juntan en su mediana.</span>
+        <span class="aws-msg" id="aws-msg" role="status"></span>
+      </div>
+    </div>
+
+    <details class="card guide card-gap">
+      <summary>Antes de sacar conclusiones</summary>
+      <ul>
+        <li><b>Misma cantidad de pruebas:</b> «después» usa tantas repeticiones como «antes» (3 en baja, media, alta y killer; 1 en 1.000, 2.000 y 3.000), las primeras que se corrieron.</li>
+        <li><b>Colores del cambio (tabla de cada carga):</b> verde = mejoró; rojo = empeoró algo que debía bajar; gris = cambio menor al 10 % (ruido), costo esperado de una mejora, o métrica sin dirección buena (red, disco, us/sy/id).</li>
+        <li><b>El trazo a los demás sube a ~27 ms en estas corridas:</b> el servidor medido esperaba 25 ms para agrupar los envíos (<code>BROADCAST_FLUSH_MS=25</code>), y eso sumó 25 ms a cada mensaje, también en p50. Ya se corrigió: ahora agrupa por vuelta del event loop, sin espera (en una prueba rápida en Docker 1 CPU, alta, op p95 bajó de 31 a 2,8 ms). Falta repetir la campaña.</li>
+        <li><b>La memoria sube ~50 % en todos los entornos:</b> causa sin confirmar (Node 24 y Argon2id son sospechosos).</li>
+        <li><b>El PC no es comparable:</b> en «después» sus núcleos del servidor iban a ~1.500 MHz contra ~2.400 MHz en «antes», y la máquina estaba 2 a 3 veces más ocupada porque manejaba la campaña de AWS a la vez. También cambió Node 22 → 24. Eso explica casi toda la CPU y la latencia REST de más en el PC.</li>
+        <li><b>Falta Docker 2 CPU:</b> un reset lanzado desde fuera dejó al laboratorio ocupado, el cambio de entorno se rechazó y la campaña no lo revisaba (ya lo revisa). La fase de docker1 corrió otra vez en el PC y la de docker2 corrió en docker1; Docker 2 CPU solo tiene las de capacidad «después».</li>
+        <li><b>Las advertencias de la página Comparar siguen valiendo:</b> REST p95 con poca carga salta entre 7 y 30 ms por azar; 15,1 s es el tope del generador; 1 repetición en las de capacidad.</li>
+      </ul>
+    </details>
+
+    <div id="view"></div>
+  </main>
+  <div id="tip" hidden></div>
+
+  <script src="vendor/uPlot.iife.min.js"></script>
+  <script src="comparar.js"></script>
+</body>
+</html>

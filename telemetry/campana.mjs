@@ -72,7 +72,17 @@ for (const [i, env] of ENVS.entries()) {
       await idle();
     }
     log(`Preparando ${env}`);
-    await post('api/prepare', { mode: env, workers: Number(args.workers) });
+    // Con otra tarea en curso (un reset lanzado desde fuera) el lab responde 409 y seguiría en el entorno
+    // anterior: así, el 7-nov, las pruebas de docker1 corrieron otra vez en el PC y las de docker2 en docker1.
+    let r = await post('api/prepare', { mode: env, workers: Number(args.workers) });
+    if (r.error) {
+      await idle();
+      r = await post('api/prepare', { mode: env, workers: Number(args.workers) });
+    }
+    if (r.error) {
+      log(`${env} no se pudo preparar: ${r.error}`);
+      continue;
+    }
     await idle();
   }
   if (!st.ready) {

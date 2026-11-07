@@ -16,14 +16,22 @@
   const finite = (v) => v.filter((x) => typeof x === 'number' && Number.isFinite(x));
 
   // El color sigue al entorno en toda la página, aunque se oculten los demás.
-  const ENVS = [
+  const BASE_ENVS = [
     { id: 'pc', name: 'PC nativo', color: '--s1' },
     { id: 'docker-1cpu', name: 'Docker 1 CPU', color: '--s2' },
     { id: 'docker-2cpu', name: 'Docker 2 CPU', color: '--s3' },
     { id: 'aws-unlimited', name: 'AWS Unlimited', color: '--s4', dash: true, note: 't3.small, sin recorte de CPU' },
     { id: 'aws-limited', name: 'AWS Limited', color: '--s5', dash: true, note: 't3.small, con créditos de CPU' },
   ];
-  const isAws = (id) => id.startsWith('aws-');
+  // Antes/Después: cada entorno se parte en dos columnas, la del servidor anterior en gris y la del mejorado en su color.
+  const BA = location.pathname.endsWith('antes-despues.html');
+  const ENVS = BA
+    ? BASE_ENVS.flatMap((e) => [
+      { ...e, id: `${e.id}@antes`, name: `${e.name} · antes`, color: '--muted', base: e.id },
+      { ...e, id: `${e.id}@despues`, name: `${e.name} · después`, base: e.id },
+    ])
+    : BASE_ENVS;
+  const isAws = (id) => !BA && id.startsWith('aws-');
   const TESTS = [
     { id: 'baja', name: 'Baja', users: 100 },
     { id: 'media', name: 'Media', users: 300 },
@@ -482,9 +490,26 @@
       const a = agg(e.id, test, fn);
       if (a.down) return '<td class="num">✕ cayó</td>';
       if (a.v == null) return '<td class="num">–</td>';
-      return `<td class="num">${esc(f(a.v))}${a.n > 1 ? `<small>${esc(f(a.lo))} a ${esc(f(a.hi))}</small>` : ''}</td>`;
+      return `<td class="num">${esc(f(a.v))}${a.n > 1 ? `<small>${esc(f(a.lo))} a ${esc(f(a.hi))}</small>` : ''}${BA ? delta(label, e, test, fn, a.v) : ''}</td>`;
     }).join('')}</tr>`);
     section('Tabla: todas las cifras', 'Mediana y, en gris, el rango de las repeticiones.', false).innerHTML = `<div class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>Métrica</th>${envs.map((e) => `<th>${e.name}</th>`).join('')}</tr></thead><tbody>${body.join('')}</tbody></table></div></div>`;
+  }
+
+  // Cambio frente a «antes»: verde si mejoró, rojo solo si empeoró algo que debía bajar,
+  // gris si es ruido (<10 %), un costo esperado del cambio o una métrica que no tiene dirección buena.
+  const HIGHER = new Set(['Usuarios conectados']);
+  // El trazo ya no es «esperado»: la espera de 25 ms que lo subía era la regresión (ver docs/CAMBIOS-SERVIDOR.md).
+  const EXPECTED = {};
+  const NEUTRAL = /^(Mensajes|us$|sy$|wa$|id$|st$|Máquina|Disco|Red)/;
+  function delta(label, e, test, fn, after) {
+    if (!e.id.endsWith('@despues')) return '';
+    const before = agg(`${e.base}@antes`, test, fn).v;
+    if (before == null || !(before > 0)) return '';
+    const p = ((after - before) / before) * 100;
+    const better = HIGHER.has(label) ? p > 0 : p < 0;
+    const why = Math.abs(p) < 10 ? 'ruido' : NEUTRAL.test(label) ? '' : !better && (EXPECTED[label] || false);
+    const color = why !== false || NEUTRAL.test(label) ? 'var(--muted)' : better ? 'var(--good)' : 'var(--critical)';
+    return `<small style="color:${color}">${p > 0 ? '+' : ''}${num(p)} %${why ? ` · ${why}` : ''}</small>`;
   }
 
   function verdict(env, test, detail = true) {
@@ -556,9 +581,10 @@
     $('aws-msg').classList.toggle('error', error);
   };
   async function load() {
-    const r = await fetch('api/comparar');
+    const r = await fetch(BA ? 'api/antes-despues' : 'api/comparar');
     if (!r.ok) throw new Error(`Error ${r.status}`);
-    RUNS = (await r.json()).runs;
+    const j = await r.json();
+    RUNS = BA ? [...j.before.map((x) => ({ ...x, env: `${x.env}@antes` })), ...j.after.map((x) => ({ ...x, env: `${x.env}@despues` }))] : j.runs;
   }
 
   // El archivo manda: un botón de carga solo confirma que el archivo sea de esa carga.

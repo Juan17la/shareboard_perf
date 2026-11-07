@@ -17,7 +17,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { loadRuns, removeAws, saveAws } from './lib/comparar.mjs';
+import { loadBeforeAfter, loadRuns, removeAws, saveAws } from './lib/comparar.mjs';
 import { ARRIVE_SEC, runTest } from './lib/runner.mjs';
 import { CORES, DATA, MODES, coreLayout, freePort, localTarget, SERVER_PORT, AGENT_PORT } from './lib/target.mjs';
 
@@ -337,6 +337,7 @@ async function handle(req, res) {
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });
     return createReadStream(file).pipe(res);
   }
+  if (p === '/api/antes-despues') return json(res, 200, await loadBeforeAfter());
   if (p === '/api/comparar') return json(res, 200, { runs: await loadRuns() });
   if (p === '/api/comparar/aws' && req.method === 'POST') {
     // Este tipo obliga al navegador a preguntar antes: otra página abierta no puede escribir aquí.

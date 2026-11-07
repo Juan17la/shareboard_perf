@@ -21,8 +21,8 @@ El costo principal no era construir los mensajes, sino **escribirlos uno por uno
 
 | # | Cambio | Antes | Ahora | Se activa |
 |---|---|---|---|---|
-| 1 | Validar el PIN | Síncrono: congelaba el hilo ~45 ms | Asíncrono, en el threadpool | Siempre |
-| 2 | Escribir en los sockets | Un `writev` por mensaje y destinatario | Una escritura por socket cada 25 ms | Siempre (`BROADCAST_FLUSH_MS`) |
+| 1 | Validar el PIN | scrypt síncrono: congelaba el hilo ~45 ms | HMAC con `TOKEN_SECRET` (~0,003 ms); los PIN viejos se actualizan al entrar | Siempre |
+| 2 | Escribir en los sockets | Un `writev` por mensaje y destinatario | Una escritura por socket por vuelta del event loop, sin espera | Siempre (`BROADCAST_FLUSH_MS` añade espera) |
 | 3 | Serializar y decodificar | `JSON.stringify` por destinatario; `raw.toString()` dos veces | Una vez por difusión y por mensaje | Siempre |
 | 4 | Procesos de Node | Uno solo | Varios, cada tablero siempre en el mismo | **`WORKERS=n`** |
 | 5 | Hash de contraseñas | scrypt N=2¹⁴, p=5 | Argon2id 19 MiB, t=2 | **Node 24.7 o más nuevo** |
@@ -51,19 +51,19 @@ Cómo leerlas:
 
 ## Cada cambio
 
-### 1. El PIN ya no congela el servidor
+### 1. El PIN ya no cuesta 45 ms
 
 `server/src/pin.ts` y `server/src/routes/boards.ts`.
 
 ```ts
-// Antes: bloqueaba el hilo principal ~45 ms, y con él todos los tableros.
+// Antes: scrypt, ~45 ms de CPU por cada entrada de invitado a un tablero con PIN.
 const key = scryptSync(pin, salt, 32);
 
-// Ahora: corre en el threadpool.
-const key = await scryptAsync(pin, salt, {});
+// Ahora: un HMAC con TOKEN_SECRET, como los códigos por correo (~0,003 ms).
+return `p1$${salt}$${codeHash('pin', salt, pin)}`;
 ```
 
-El formato guardado no cambió, así que los PIN existentes siguen funcionando. `hashPin` y `verifyPin` ahora devuelven una promesa.
+Un hash lento no protege un PIN de 4 a 12 dígitos (10⁴ intentos a 45 ms son minutos de un núcleo). Los intentos en línea los frena el límite de PIN, y sin el secreto una base filtrada no se puede probar fuera de línea. Los PIN viejos (`<sal>:<clave>`, scrypt) siguen funcionando y se reescriben en la siguiente entrada correcta. Si se cambia `TOKEN_SECRET`, los invitados no entran a tableros con PIN hasta que el creador lo vuelva a poner (creador y miembros no lo necesitan).
 
 ### 2. Escrituras agrupadas
 
@@ -71,7 +71,7 @@ El formato guardado no cambió, así que los PIN existentes siguen funcionando. 
 
 **Antes:** cada difusión hacía un `socket.send`, y con ello un `writev`, por destinatario y por mensaje.
 
-**Ahora:** las difusiones se encolan por socket y un temporizador las escribe juntas cada 25 ms, usando `cork`/`uncork` del socket TCP:
+**Ahora:** las difusiones se encolan por socket y se escriben juntas al final de cada vuelta del event loop (`setImmediate`), usando `cork`/`uncork` del socket TCP:
 
 ```ts
 const tcp = socket._socket;
@@ -81,8 +81,8 @@ tcp.uncork();
 ```
 
 - **Orden:** un envío directo a un socket (`pong`, `joined`, errores) primero vacía su cola, así el cliente siempre recibe los mensajes en orden. Cerrar un socket también la vacía.
-- **Retraso:** los mensajes difundidos pueden tardar hasta 25 ms más. El cursor ya se actualiza cada 45 ms y el límite de la prueba para el trazo es 150 ms.
-- **Configuración:** `BROADCAST_FLUSH_MS=0` vuelve a enviar cada mensaje de inmediato, útil para comparar.
+- **Retraso:** ninguno añadido. La primera versión esperaba 25 ms y la campaña del 7-nov midió +25 ms en cada mensaje difundido (op p95 de 0,5 a 5 ms → 27 a 30 ms en los cinco entornos). Ahora la cola se vacía con `setImmediate` al final de la vuelta del event loop: con carga, la vuelta es más larga y el lote crece solo.
+- **Configuración:** `BROADCAST_FLUSH_MS=n` (por defecto 0) añade una espera de n ms para lotes más grandes, a costa de n ms en cada mensaje.
 - **Detalle técnico:** `ws` no ofrece agrupación propia, así que se usa `_socket`, una propiedad interna. Al actualizar `ws`, hay que comprobar que siga existiendo.
 
 ### 3. Menos serialización

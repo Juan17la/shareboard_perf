@@ -84,9 +84,27 @@ Un agente corre en la máquina del servidor, **fuera** del servidor, y cada segu
 | CPU para el servidor | 4 núcleos físicos, 8 hilos, hasta 4,5 GHz | Los mismos, con techo de 2 CPU | Los mismos, con techo de 1 CPU | 1 núcleo físico, 2 hilos, 2,5 GHz de base | Igual, con base de ~20 % |
 | Memoria | 15 GB | 512 MB | 512 MB | 1,9 GB | 1,9 GB |
 | Disco | NVMe local | NVMe local | NVMe local | EBS gp3 por red | EBS gp3 por red |
-| Costo al mes | ~17.600 COP de energía, más la compra del equipo | USD 85 (Render Pro, sin base de datos) | USD 25 (Render Standard, sin base de datos) | USD 20,43 más el excedente de CPU | USD 20,43 |
+| Equivalente en AWS | c7i.2xlarge: 8 vCPU (4 núcleos físicos), 16 GiB | Fargate: 2 vCPU, 4 GB | Fargate: 1 vCPU, 2 GB | t3.small Unlimited | t3.small Standard |
+| Costo al mes en AWS | USD 265,86 (en casa: ~17.600 COP de energía) | USD 75,73 | USD 39,69 | USD 20,43 más el excedente de CPU | USD 20,43 |
 
-El precio de AWS suma la instancia (USD 0,0208 la hora × 730 h = 15,18), el disco (20 GB × USD 0,08 = 1,60) y la IP pública (USD 0,005 la hora × 730 h = 3,65), con los precios On-Demand de us-east-1 consultados el 2 de noviembre de 2026. Los contenedores se compararon con los planes de Render de CPU parecida. La energía del PC usa la potencia base del procesador (28 W) y la tarifa de Enel Colombia; no se midió con un medidor.
+### Cuánto costaría cada entorno en AWS
+
+Para comparar precios con la misma regla, a cada entorno se le buscó lo más parecido que AWS alquila, con los precios On-Demand de us-east-1 (Virginia) consultados el 8 de noviembre de 2026. Un mes son 730 horas. A las máquinas EC2 se les suman el disco (20 GB × USD 0,08 = 1,60) y la IP pública (USD 0,005 la hora × 730 h = 3,65).
+
+**El PC (el procesador del Zenbook).** AWS no alquila procesadores de portátil, así que se buscó un Intel de generación parecida con la misma cantidad de núcleos que usó el servidor. La **c7i.2xlarge** tiene 8 vCPU, que son **4 núcleos físicos con 2 hilos cada uno**, igual que los 4 P-cores del Core Ultra 5 125H, y 16 GiB de RAM, frente a 15 GB. Su procesador es un Xeon Platinum 8488C (Sapphire Rapids, la generación de servidor de 2023) a 3,2 GHz con todos los núcleos trabajando. Cuesta USD 0,357 la hora: 260,61 + 1,60 + 3,65 = **USD 265,86 al mes**. Es **13 veces** lo que cuesta la t3.small.
+
+Aun así, cada núcleo de la c7i es más lento que un P-core del portátil (3,2-3,8 GHz contra 4,5 GHz). Como Shareboard depende de **un solo núcleo**, la c7i.2xlarge probablemente aguantaría algo menos que los 3.000 usuarios del PC. Lo más cercano en velocidad por núcleo es la **r7iz** (3,9 GHz), pero viene con mucha más RAM: la r7iz.2xlarge (8 vCPU y 64 GiB) costaría unos **USD 548 al mes**. Si se alquilara el portátil completo (14 núcleos y 18 hilos), la c7i.4xlarge (16 vCPU y 32 GiB) costaría unos **USD 526 al mes**. En casa, el mismo PC solo cuesta la energía: unos **17.600 COP al mes**, con la potencia base del procesador (28 W) y la tarifa de Enel Colombia, sin medidor y sin contar la compra del equipo.
+
+**Los contenedores.** El servicio de AWS que corre un contenedor con un techo de CPU y memoria, igual que Docker con `--cpus`, es **Fargate**. Cobra USD 0,04048 por vCPU-hora y USD 0,004445 por GB-hora, y tiene un mínimo de memoria según la CPU. Con 1 vCPU el mínimo es 2 GB; con 2 vCPU, 4 GB. No deja pedir los 512 MB de la prueba, así que el contenedor equivalente siempre trae más memoria que la medida.
+
+- **Docker 1 CPU** → Fargate con 1 vCPU y 2 GB: 29,55 + 6,49 = 36,04, más la IP pública = **USD 39,69 al mes**.
+- **Docker 2 CPU** → Fargate con 2 vCPU y 4 GB: 59,10 + 12,98 = 72,08, más la IP pública = **USD 75,73 al mes**.
+
+Hay que tener una advertencia en cuenta. En las pruebas, los contenedores usaban los P-cores del portátil (4,5 GHz). Una vCPU de Fargate es un hilo de un Xeon de servidor, más lento por núcleo. En Fargate rendirían menos que en el PC, más cerca de la t3.small por núcleo pero sin créditos que se agoten. A cambio, con 2 o 4 GB la memoria ya no los limitaría.
+
+**AWS t3.small.** Es la que se midió: USD 0,0208 la hora × 730 h = 15,18, más el disco y la IP pública = **USD 20,43 al mes**. En modo Unlimited se suma el excedente de CPU, a USD 0,05 por vCPU-hora.
+
+Ninguno de estos precios incluye la base de datos. Los precios de c7i y r7iz vienen de agregadores que copian la lista de AWS ([DoiT](https://www.doit.com/compute/spot/us-east-1/c7i.2xlarge), [Holori](https://calculator.holori.com/aws/ec2/r7iz.xlarge/us-east-1)), y los de Fargate, de [aws.amazon.com/fargate/pricing](https://aws.amazon.com/fargate/pricing/). Conviene confirmarlos en la calculadora de AWS antes de una decisión real.
 
 Igual en todos: el mismo código, Node 22, MongoDB 7 en Docker, los mismos datos y la misma carga.
 
@@ -129,6 +147,8 @@ Con 600 usuarios todos pasan, así que esa carga sirve para comparar cómo traba
 
 **Si la carga se multiplica por diez:** el hilo se satura (99 %). El proceso sigue vivo, pero las peticiones esperan tanto en la fila que el 38 % llega al tiempo límite de 15 s. Entran unas 4.130 personas de 6.000, con un ping p99 de ~1 s.
 
+**Costo:** en casa, unos 17.600 COP al mes de energía. Alquilar algo parecido en AWS (c7i.2xlarge, 4 núcleos físicos y 16 GiB) costaría USD 265,86 al mes, 13 veces la t3.small. Aun así, esa máquina tiene núcleos más lentos que el portátil. Para este servidor, que usa un solo núcleo, pagar por más núcleos no compra capacidad: la compra un núcleo más rápido.
+
 ### Docker 2 CPU
 
 **¿Aguanta la carga?** Hasta 2.000 usuarios. Con 3.000 se cae a los 5,5 minutos.
@@ -141,7 +161,7 @@ Con 600 usuarios todos pasan, así que esa carga sirve para comparar cómo traba
 
 **Si la carga se multiplica por diez:** se cae entre los 55 y los 88 segundos por falta de heap.
 
-**Costo:** el plan equivalente (Render Pro, 2 CPU y 4 GB) cuesta USD 85 al mes, sin contar la base de datos.
+**Costo:** en AWS Fargate (2 vCPU y 4 GB) serían USD 75,73 al mes, sin la base de datos: 3,7 veces la t3.small. Lo único que daría a cambio es memoria, que es justo lo que le faltó en la prueba.
 
 ### Docker 1 CPU
 
@@ -153,7 +173,7 @@ Con 600 usuarios todos pasan, así que esa carga sirve para comparar cómo traba
 
 **Si la carga se multiplica por diez:** se cae entre los 52 y los 77 segundos, por el heap de V8, igual que el de 2 CPU.
 
-**Costo:** USD 25 al mes (Render Standard). Da la misma capacidad que la t3.small y cuesta más.
+**Costo:** en AWS Fargate (1 vCPU y 2 GB) serían USD 39,69 al mes, casi el doble que la t3.small (USD 20,43), con una capacidad medida parecida (1.000 usuarios).
 
 ### AWS Unlimited
 
@@ -214,7 +234,7 @@ Server killer es exactamente eso: la carga alta (600) multiplicada por diez (6.0
 
 ### ¿Qué opción se descarta y por qué?
 
-- **Docker 1 CPU**: falla con 2.000 usuarios con la máquina casi libre, por su cuota, y cuesta más que la t3.small (USD 25 contra USD 20,43) con la misma capacidad medida.
+- **Docker 1 CPU**: falla con 2.000 usuarios con la máquina casi libre, por su cuota, y su equivalente en AWS (Fargate) cuesta casi el doble que la t3.small (USD 39,69 contra USD 20,43) con una capacidad medida parecida.
 - **AWS Limited para más de 300 usuarios**: cuando se acaban los créditos pasa de funcionar a fallar casi todo. Sirve para la carga de referencia o para picos cortos.
 - **El PC para producción**: es el más capaz, pero no tiene IP fija, disponibilidad 24/7 ni redundancia.
 

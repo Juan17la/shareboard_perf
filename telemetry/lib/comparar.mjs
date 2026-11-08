@@ -186,8 +186,8 @@ export function removeAws(file, env) {
 }
 
 // Página Antes/Después: «antes» son las campañas ya guardadas; «después» la repetición con el servidor mejorado.
-// Las locales se leen directo de data/raw (solo las posteriores a AFTER_FROM); las de AWS se copian a resultados/2026-11-07/.
-const AFTER_FROM = '20261106-220000';
+// Las locales se leen directo de data/raw (la campaña del 7-nov desde las 09:53, sin el driver de AWS en paralelo); las de AWS se copian a resultados/2026-11-07/
+const AFTER_FROM = '20261107-145352';
 const RAW = fileURLToPath(new URL('../../data/raw', import.meta.url));
 const AFTER_DIR = join(RESULTS, '2026-11-07');
 const LOCAL = { pc: 'pc', 'docker-1cpu': 'docker-1cpu', 'docker-2cpu': 'docker-2cpu' };

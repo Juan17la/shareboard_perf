@@ -9,7 +9,7 @@ Qué mejoró, entorno por entorno, entre el servidor de antes y el servidor con 
 
 ## En una línea
 
-**Entrar es 5 veces más rápido en todos los entornos, y con carga alta el servidor responde de 2 a 15 veces más rápido y con menos CPU.** Con poca carga la diferencia es de décimas de milisegundo, y nadie la nota.
+**Iniciar sesión es 5 veces más rápido en todos los entornos, y con carga alta el servidor responde de 2 a 15 veces más rápido y con menos CPU.** En AWS, con 2.000 y 3.000 usuarios, los errores bajan a 0 %. Con poca carga la diferencia es de décimas de milisegundo, y nadie la nota.
 
 ## 1. Registro e inicio de sesión (p50 de autenticación)
 
@@ -68,18 +68,19 @@ Con baja y media carga sube entre 0,2 y 0,4 ms en el PC y en Docker. Es lo que t
 
 Con la misma carga, el servidor hace el mismo trabajo con menos CPU, y le queda margen para más usuarios. Con carga baja la CPU queda igual o sube poco (en el PC, de 4,2 a 5,7 %).
 
-## 6. Pruebas que antes fallaban y ahora pasan o aguantan
+## 6. Pruebas que antes fallaban y ahora pasan
 
 | Entorno y prueba | Antes | Después |
 |---|---|---|
-| Docker 2 CPU, 3.000 | servidor caído el 70 % de la ventana; REST p95 de 15 s | **sin caídas**; solo falla el p99 de ping (105 ms > 100) y la memoria, al 95 % |
-| Docker 1 CPU, 3.000 | REST p95 de 15 s (no respondía) | **REST p95 de 378 ms**, sin caídas; la memoria llega al 96 % |
-| Docker 1 y 2 CPU, server killer | caído en las 3 repeticiones (100 % de conexiones rechazadas) | **aguanta 2 de 3** repeticiones |
-| REST p95 con 3.000 (Docker 1 y 2 CPU) | 15.071 | **378 / 194** |
+| Docker 1 CPU, 2.000 | falla: ping p99 de 227 ms por el freno de la cuota | **pasa**: ping p99 de 92 ms |
+| AWS Unlimited, 2.000 | 15,5 % de errores REST; entrar tarda 15 s | **0 % de errores**; entrar tarda 131 ms. Solo falla el ping p99 (145 ms > 100) |
+| AWS Unlimited, 3.000 | 50,9 % de errores REST | **0 % de errores**; REST p95 de 406 ms (límite 300) |
+
+**Docker con 3.000 usuarios y server killer no mejoraron.** El contenedor pasa del 95 % de sus 512 MB, y el laboratorio detiene la prueba antes de que el proceso muera: con 3.000 usuarios a los ~4 min, y en server killer a los 50-70 s, en las 3 repeticiones. Antes también caían, por el heap de V8. Las cifras de Docker con 3.000 de las secciones 1 a 4 son de los ~85 s medidos antes de esa detención, así que no son comparables con una ventana completa de 600 s.
 
 ## Lo que no mejoró
 
-- **La memoria sube entre 30 y 80 % en todos los entornos.** En el contenedor de 512 MB llega al 100 % en server killer y en 3.000, y es lo que tumba el servidor en la 3.ª repetición de server killer en Docker. En AWS el servidor se cae el 92 % de la ventana de server killer (antes, 45 %). La causa no está confirmada; los sospechosos son Node 24 y los 19 MiB de Argon2id por cada hash. **Es lo siguiente que hay que revisar.**
+- **La memoria sube entre 30 y 80 % en todos los entornos.** En el contenedor de 512 MB es ahora el primer límite: detiene las pruebas de 3.000 y de server killer. En AWS, con server killer, el servidor se queda sin RAM a los ~3,3 min (antes, a los 7,7-11,3 min) y está caído el 92 % de la ventana (antes, el 45 %). La causa no está confirmada; los sospechosos son Node 24 y los 19 MiB de Argon2id por cada hash. **Es lo siguiente que hay que revisar.**
 - **Entrar a un tablero con PIN y poca carga sigue en ~31 ms.** El seed restaura los PIN viejos (scrypt) antes de cada prueba, así que la primera entrada a cada tablero todavía paga scrypt y lo cambia a HMAC. En uso real eso pasa una sola vez por tablero.
 - **AWS Limited no se pudo comparar.** La repetición del 8-nov no tuvo CPU robada (≈1 %, contra 54–71 % el 5-nov): el servidor no se quedó sin créditos, y por eso no se guardó como Limited. Hay que repetirla en Standard con los créditos agotados.
 - **Node también cambió (22 → 24)**, así que las diferencias no son solo del código.

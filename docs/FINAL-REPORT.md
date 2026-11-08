@@ -2,393 +2,276 @@
 
 ## 1. Introducción
 
-**Shareboard** es una pizarra colaborativa en tiempo real: varias personas abren el mismo tablero desde el navegador o el celular, dibujan, escriben y ven los cursores y trazos de las demás al instante.
+### Qué se hizo
 
-Este proyecto responde a una pregunta práctica: **¿en qué máquina debería correr el servidor de Shareboard y cuántos usuarios aguanta cada opción?** Para responderla ejecutamos el mismo servidor, con los mismos datos y la misma carga, en cinco entornos:
+**Shareboard** es una pizarra colaborativa en tiempo real. Varias personas abren el mismo tablero desde el navegador o el celular, dibujan, escriben y ven al instante los cursores y los trazos de los demás.
 
-| Entorno | Qué representa |
-|---|---|
-| **PC nativo** | Una máquina física con el servidor corriendo directamente |
-| **Docker 1 CPU** | Un contenedor limitado a 1 CPU y 512 MB, como un plan pequeño de un PaaS |
-| **Docker 2 CPU** | Lo mismo, con 2 CPU y 512 MB |
-| **AWS Unlimited** | Una instancia EC2 t3.small que puede usar toda su CPU y paga el excedente |
-| **AWS Limited** | La misma instancia, pero regulada por créditos de CPU |
+El proyecto responde a una pregunta práctica: **¿en qué máquina debería correr el servidor de Shareboard, cuántos usuarios aguanta cada opción y por qué?** Para responderla se ejecutó el mismo servidor, con los mismos datos y la misma carga, en cinco entornos: un PC, dos contenedores Docker con límites distintos y una instancia de AWS en dos modos de CPU. Se probaron siete niveles de carga, de 100 a 6.000 personas conectadas a la vez, en 75 corridas. En cada corrida se midió la CPU, la memoria, el disco, la red y la latencia, para saber no solo quién aguanta más, sino **qué recurso se agota primero y qué parte del computador lo causa**.
 
-Probamos siete niveles de carga, de 100 a 6.000 personas conectadas a la vez, con 75 corridas en total. En cada una medimos CPU, memoria, disco, red y latencia para saber no solo quién aguanta más, sino **qué recurso se agota y por qué**.
+Con lo aprendido se optimizó el código del servidor y se repitió la campaña en el PC, en los dos contenedores y en AWS Unlimited. La sección 7 cuenta qué cambió y qué mejoró.
 
-Con lo aprendido optimizamos el servidor y repetimos la campaña en PC, Docker y AWS Unlimited. Las secciones 2 a 5 describen el servidor original; la sección 6 muestra el antes y el después.
+### El repositorio
 
-## 2. El proyecto
+Todo el trabajo está en el repositorio `shareboard_perf`, organizado así:
 
-### Qué hace
+- **`servidor/`**: una copia del servidor real de Shareboard, el que se mide. Está escrito en TypeScript sobre Node.js, con Fastify para las peticiones REST, WebSocket para el tiempo real y MongoDB como base de datos.
+- **`telemetry/`**: el laboratorio de medición. `lab.mjs` levanta una interfaz web en el puerto 7070 desde donde se prepara un entorno y se lanza una prueba. `vu-worker.mjs` simula a las personas, `agent.mjs` mide la máquina del servidor y `campana.mjs` corre una serie completa de pruebas sin intervención.
+- **`envs/`** y **`setup/`**: la configuración de los contenedores Docker y el guion que prepara las instancias de AWS.
+- **`resultados/`** y **`data/raw/`**: los datos crudos de cada corrida, segundo a segundo, en formato `ndjson`.
+- **`docs/`**: este informe y los documentos de detalle: [CARGAS.md](CARGAS.md), [MEDICIONES.md](MEDICIONES.md), [COMPARACIONES.md](COMPARACIONES.md), [CONCLUSIONES.md](CONCLUSIONES.md) y [CAMBIOS-SERVIDOR.md](CAMBIOS-SERVIDOR.md).
 
-Una persona crea un tablero y comparte su enlace o código corto. Quienes entran pueden dibujar a mano, añadir figuras, texto e imágenes, mover y borrar elementos, y ver en vivo los cursores y lo que los demás están dibujando. Se puede entrar con cuenta o como invitado, y un tablero puede protegerse con PIN. También tiene funciones de apoyo, como permisos y dibujo con IA, que no formaron parte de estas pruebas.
+### Cómo funciona el servidor, en lo que importa para el rendimiento
 
-### Cómo está construido
+El servidor tiene dos canales. Por **REST** pasan las acciones puntuales: registrarse, iniciar sesión, listar tableros, crear uno y unirse a uno. Por **WebSocket** pasa el tiempo real: cada persona mantiene una conexión abierta por la que envía y recibe trazos, cursores, vistas previas y pings.
 
-Son tres proyectos independientes que solo comparten el contrato de comunicación:
+Cuatro decisiones de diseño explican casi todo lo que se midió:
 
-```
-Web (React + Vite)        ─┐
-                           ├─ REST: cuentas, crear y unirse a tableros
-Móvil (Expo/React Native) ─┘  WebSocket: trazos, cursores, presencia
-                                     │
-                                     ▼
-                     Servidor (Node.js + Fastify + TypeScript)
-                                     │  escritura diferida (máx. 1 s)
-                                     ▼
-                                  MongoDB
-```
+1. **Un solo proceso de Node.** Node ejecuta todo el JavaScript de un proceso en **un solo hilo**. Cuando alguien dibuja, ese hilo recibe el mensaje y lo reenvía a cada persona del tablero, una por una. Más núcleos no aceleran ese trabajo; un núcleo más rápido sí.
+2. **Los tableros activos viven en la memoria RAM.** Los cambios se guardan en MongoDB agrupados cada segundo. Por eso el tiempo real casi no toca el disco, pero la memoria crece con los tableros abiertos.
+3. **Las contraseñas usan scrypt**, una función lenta a propósito para que adivinarlas cueste. Corre en el *threadpool* (un grupo de hilos auxiliares de Node), fuera del hilo principal.
+4. **El PIN de un tablero usaba `scryptSync`**, la versión síncrona de scrypt, que sí corre en el hilo principal y lo congela mientras calcula.
 
-Estas pruebas se centran en el **servidor**, que tiene dos canales:
+## 2. Las cargas
 
-- **REST** para las acciones puntuales: registrarse, iniciar sesión, listar, crear y unirse a tableros.
-- **WebSocket** para el tiempo real: cada persona mantiene una conexión abierta por la que envía y recibe trazos, cursores, vistas previas y pings.
+### Cómo se comportan las personas simuladas
 
-### Decisiones de diseño que afectan el rendimiento
+La carga intenta parecerse al uso real de una pizarra, no bombardear un solo endpoint. El generador simula **personas** organizadas en **salas**: grupos que comparten un tablero. Casi la mitad de las salas (45 %) son de una sola persona, el 30 % son parejas o tríos, el 18 % equipos de 4 a 8, el 5 % talleres de 10 a 15 y el 2 % clases de 25 a 35. Cada sala dura entre 15 y 50 minutos según su tamaño, y la sesión media de una persona es de unos 25 minutos. Cuando una sala cierra, se abre otra, así el número de usuarios se mantiene constante.
 
-| Decisión | Cómo funciona | Consecuencia |
-|---|---|---|
-| **Tableros en memoria** | El tablero activo vive en la RAM del proceso y se guarda en MongoDB después de cambiar, agrupando los cambios de cada segundo. Sale de memoria 5 minutos después de quedar vacío | El tiempo real casi no toca el disco, pero la memoria crece con los tableros abiertos |
-| **Un solo proceso de Node** | Todo el JavaScript se ejecuta en un hilo. La difusión recorre a los participantes del tablero y serializa y envía el mensaje a cada uno | **Es el principal límite medido.** Más núcleos no aceleran esta parte; un núcleo más rápido sí |
-| **scrypt para contraseñas** | Es costoso a propósito (16 MB por cálculo) y corre en el threadpool de libuv, fuera del hilo principal | Un login tarda 136 ms en el PC y hasta 298 ms en AWS, pero no congela el tiempo real |
-| **scrypt síncrono para el PIN** | Validar el PIN de un tablero usa `scryptSync`, que sí corre en el hilo principal | Coincide con el escalón del p95 de REST: ~30 ms en el PC y ~50 ms en AWS |
-| **Sesiones firmadas de 30 días** | Tokens HMAC sin estado en el servidor | La mayoría de las visitas no hace login, lo que abarata la carga real |
-| **Una sola instancia** | Las salas de cada tablero viven en ese proceso | Escalar a varios procesos requeriría un canal compartido (el código ya lo señala con Redis) |
+Las llegadas siguen un horario que **no depende de lo que tarde el servidor**: si el servidor se atasca, la gente sigue llegando, y el problema aparece en la latencia y en los errores en lugar de esconderse. A esto se le llama *modelo abierto*.
 
-### Dependencias del backend
+Al llegar, el 52 % de las personas ya tiene sesión guardada (la sesión dura 30 días), el 35 % entra como invitado con un enlace, el 12 % tiene que iniciar sesión y el 1 % crea una cuenta. Si una petición falla, la persona reintenta dos veces y se rinde. Dentro del tablero, cada persona alterna entre mirar, mover el cursor, dibujar, escribir, mover y borrar elementos, o irse a otra pestaña. Las frecuencias salen del cliente real: el cursor se envía cada 45 ms, la vista previa del trazo cada 33 ms y el ping cada 20 s.
 
-| Dependencia | Para qué se usa |
-|---|---|
-| **Node.js ≥ 22** | Entorno de ejecución (24 en la sección 6, para Argon2id) |
-| **TypeScript** | Lenguaje; se compila con `tsc` (`tsx` solo en desarrollo) |
-| **fastify** | Servidor HTTP y rutas REST; su log da la latencia interna que medimos |
-| **@fastify/websocket** | Conexiones WebSocket del tiempo real |
-| **@fastify/cors** | Permite las peticiones desde otros orígenes, como el cliente web |
-| **mongodb** | Driver oficial para guardar tableros y cuentas (MongoDB 7, en Docker en todas las pruebas) |
-| **nodemailer** | Correos de verificación y recuperación de contraseña; no se ejercita en las pruebas |
+Los porcentajes de salas, caminos y actividades son **supuestos de diseño**: no hay datos públicos de uso de este tipo de aplicación. Las frecuencias, en cambio, son las del código del cliente.
 
-La criptografía (scrypt, HMAC) viene de `node:crypto`, sin librerías adicionales.
+### Distribución de las peticiones
 
-## 3. Cómo se genera la carga
+Casi todo el trabajo está en el tiempo real, no en REST. Con 300 usuarios, el servidor recibe unos 780 mensajes por segundo de los clientes y entrega miles, frente a menos de una petición REST por segundo. De esas pocas peticiones REST, el 54 % son listar tableros, el 36 % unirse a uno, el 6 % iniciar sesión, el 3 % crear un tablero y cerca del 0,5 % registrarse.
 
-Quisimos parecernos al uso real de una pizarra, no bombardear un endpoint. El generador simula **personas** organizadas en **salas**:
+### Niveles, cantidades y tiempos
 
-- **Salas de distinto tamaño.** Cada sala es un grupo que comparte tablero, desde una persona sola hasta una clase, con duración media de 15 a 50 minutos. Cuando una cierra, se abre otra para mantener el número de usuarios.
-- **Modelo abierto.** Las llegadas y salidas siguen un horario que no depende de lo que tarde el servidor. Si el servidor se atasca, la carga no baja y el problema aparece en la latencia y los errores.
-- **Caminos de entrada realistas.** La mayoría llega con sesión guardada o como invitado. Solo cerca del 13 % hace login y cerca del 1-3 % se registra. Si una petición falla, la persona reintenta dos veces y se rinde.
-- **Actividad dentro del tablero.** Cada persona alterna entre mirar, mover el cursor, dibujar, escribir, mover, borrar y cambiar de pestaña. Las frecuencias salen del cliente real: cursor cada 45 ms, vista previa cada 33 ms y ping cada 20 s.
+Todas las pruebas duran lo mismo: **120 s de llegada, 30 s de estabilización y 600 s de medición**, más una pausa de 60 s entre pruebas. Solo cuenta la ventana de 600 s. Antes de cada prueba se reinicia el servidor y se restaura la base de datos, con 1.500 cuentas y 2.000 tableros de tamaños variados.
 
-| Tipo de sala | % de salas | Personas | Duración media |
-|---|---|---|---|
-| Solo | 45 | 1 | 15 min |
-| Pareja o trío | 30 | 2-3 | 20 min |
-| Equipo | 18 | 4-8 | 30 min |
-| Taller | 5 | 10-15 | 45 min |
-| Clase | 2 | 25-35 | 50 min |
+| Prueba | Usuarios a la vez | Llegadas por minuto | Logins por minuto | Repeticiones | Representa |
+|---|---|---|---|---|---|
+| Baja | 100 | ~6 | ~0,8 | 3 | Una facultad o un colegio |
+| Media | 300 | ~12-15 | ~1,6 | 3 | Una universidad mediana (la referencia) |
+| Alta | 600 | ~24 | ~3 | 3 | Una universidad grande |
+| Capacidad 1.000 | 1.000 | ~40 | ~5 | 1 | Buscar el límite |
+| Capacidad 2.000 | 2.000 | ~80 | ~10 | 1 | Buscar el límite |
+| Capacidad 3.000 | 3.000 | ~120 | ~15 | 1 | Buscar el límite |
+| Server killer | 6.000 | ~240 | ~31 | 3 | La alta multiplicada por diez |
 
-> Las frecuencias vienen del cliente real, pero los porcentajes de salas, caminos y actividades son **supuestos de diseño**: no tenemos datos de uso real para calibrarlos.
+Las pruebas de capacidad tienen una sola repetición, así que indican el orden de los entornos, no un límite exacto.
 
-Casi todo el trabajo está en el tiempo real, no en REST. Con 300 usuarios en el PC, el servidor recibe unos 950 mensajes por segundo y entrega unos 6.000, frente a menos de una petición REST por segundo.
+### Cuándo una prueba «pasa»
 
-### Tiempos de cada prueba
+Una prueba pasa si durante los 600 s medidos el p95 de REST queda bajo 300 ms, el p95 del login bajo 1 s, el p95 del trazo que ven los demás bajo 150 ms, el p99 del ping bajo 100 ms y los errores REST bajo el 1 %. Los umbrales siguen los límites de respuesta de Nielsen: 0,1 s se siente instantáneo y 1 s no interrumpe el pensamiento. Se usan percentiles y no promedios: el p95 es el tiempo que no supera el 95 % de las peticiones, y el p99 muestra lo que vive el 1 % más lento, que es donde aparecen los atascos.
 
-**Todas las pruebas duran lo mismo, 12,5 minutos; solo cambia el número de usuarios.**
+### Cómo se mide
 
-| Fase | Duración | Qué pasa |
-|---|---|---|
-| Preparación | Antes de cada prueba | Se reinicia el servidor y se restaura la base de datos (1.500 cuentas, 2.000 tableros) |
-| Llegada | 120 s | Entran los usuarios, sin login, para no provocar una avalancha artificial |
-| Estabilización | 30 s | Se deja asentar la carga; no se mide |
-| **Medición** | **600 s** | La única ventana usada en los resultados |
-| Pausa | 60 s | Hasta la siguiente prueba |
+Un agente corre en la máquina del servidor, **fuera** del servidor, y cada segundo lee los archivos del kernel de Linux: `/proc/stat` para la CPU (total, por núcleo y por hilo), `VmRSS` para la memoria que el proceso usa de verdad, `/proc/diskstats` para el disco, `/proc/net/dev` para la red y, en los contenedores, `cpu.stat` del cgroup para saber cuánto los frena su límite. La latencia la mide el generador desde el lado del usuario. El generador corre en otros núcleos (en el PC) o en otra máquina (en AWS) para no competir con el servidor, y una prueba se invalida si el generador pasa del 85 % de ocupación. El máximo registrado fue 73 %.
 
-| Prueba | Usuarios a la vez | Llegadas por minuto (teórico) | Repeticiones |
-|---|---|---|---|
-| Baja | 100 | ~4 | 3 |
-| Media (referencia) | 300 | ~12 | 3 |
-| Alta | 600 | ~24 | 3 |
-| Capacidad 1.000 | 1.000 | ~40 | 1 |
-| Capacidad 2.000 | 2.000 | ~80 | 1 |
-| Capacidad 3.000 | 3.000 | ~120 | 1 |
-| Server killer | 6.000 | ~240 | 3 |
+## 3. Los entornos
 
-Las llegadas teóricas son los usuarios divididos entre los ~25 minutos de sesión media. Las reales varían entre corridas.
+**PC nativo.** Un portátil ASUS Zenbook 14 con Debian 13 y un Intel Core Ultra 5 125H. Ese procesador mezcla núcleos de rendimiento (P-cores), de eficiencia (E-cores) y de bajo consumo. El servidor y MongoDB se fijaron a los **4 P-cores**, con 2 hilos cada uno (8 hilos) y hasta **4,5 GHz**. El generador quedó en los E-cores. Tiene **15 GB de RAM** y un disco NVMe Micron 2550 de 512 GB. No tiene ningún límite artificial.
+
+**Docker 1 CPU y Docker 2 CPU.** El mismo PC y los mismos P-cores, pero con el servidor dentro de un contenedor con un techo de **1 o 2 CPU de tiempo** y **512 MB de memoria sin swap**, como un plan pequeño de un PaaS. «1 CPU» no reserva un núcleo: el kernel le da al contenedor 100 ms de CPU cada 100 ms y, si los gasta antes, lo congela hasta el siguiente periodo. MongoDB también va limitado a 1 CPU y 1 GB.
+
+**AWS Unlimited y AWS Limited.** Una instancia EC2 **t3.small** en us-east-1 con Ubuntu. Tiene 2 vCPU de un Intel Xeon Platinum 8259CL a **2,5 GHz de base**, pero esas 2 vCPU son los dos hilos de **un solo núcleo físico**. Tiene **1,9 GB de RAM** y un disco EBS gp3 de 20 GiB (3.000 IOPS y 125 MB/s de base), conectado por red. Su red es de «hasta 5 Gbps», con una base de 16 MB/s. La t3 es una instancia *burstable*: solo tiene garantizado ~20 % de la máquina, y por encima gasta créditos de CPU. En modo **Unlimited**, al acabarse los créditos sigue a toda velocidad y AWS cobra el excedente. En modo **Limited** (*standard*), AWS la recorta a su base. El generador corre en otra instancia (t3.micro) de la misma zona.
+
+| | PC | Docker 2 CPU | Docker 1 CPU | AWS Unlimited | AWS Limited |
+|---|---|---|---|---|---|
+| CPU para el servidor | 4 núcleos físicos, 8 hilos, hasta 4,5 GHz | Los mismos, con techo de 2 CPU | Los mismos, con techo de 1 CPU | 1 núcleo físico, 2 hilos, 2,5 GHz de base | Igual, con base de ~20 % |
+| Memoria | 15 GB | 512 MB | 512 MB | 1,9 GB | 1,9 GB |
+| Disco | NVMe local | NVMe local | NVMe local | EBS gp3 por red | EBS gp3 por red |
+| Costo al mes | ~17.600 COP de energía, más la compra del equipo | USD 85 (Render Pro, sin base de datos) | USD 25 (Render Standard, sin base de datos) | USD 20,43 más el excedente de CPU | USD 20,43 |
+
+El precio de AWS suma la instancia (USD 0,0208 la hora × 730 h = 15,18), el disco (20 GB × USD 0,08 = 1,60) y la IP pública (USD 0,005 la hora × 730 h = 3,65), con los precios On-Demand de us-east-1 consultados el 2 de noviembre de 2026. Los contenedores se compararon con los planes de Render de CPU parecida. La energía del PC usa la potencia base del procesador (28 W) y la tarifa de Enel Colombia; no se midió con un medidor.
+
+Igual en todos: el mismo código, Node 22, MongoDB 7 en Docker, los mismos datos y la misma carga.
 
 ## 4. Resultados
 
-### Cómo lo probamos
-
-- **Mismas condiciones.** Mismo código, misma base de datos inicial, mismos perfiles de carga y MongoDB en Docker en todos los entornos.
-- **El generador no compite con el servidor.** En el PC y en Docker corre en otros núcleos de la misma máquina (E-cores, con el servidor en los P-cores). En AWS corre en otra instancia de la misma zona.
-- **Medición externa.** Un agente lee cada segundo los archivos del kernel (`/proc`) sin modificar el servidor. La latencia viene de dos lados: lo que ve el generador, en percentiles, y el log interno de Fastify.
-- **Validez.** Una prueba se invalida si el generador supera el 85 % de ocupación. El máximo fue 73 %, así que ninguna quedó invalidada.
-
-Una prueba **pasa** si durante los 600 s se cumple todo esto:
-
-| Métrica | Límite |
-|---|---|
-| p95 de REST (listar, unirse, crear) | < 300 ms |
-| p95 de login y registro | < 1 s |
-| p95 de trazo y de vista previa a los demás | < 150 ms |
-| p99 del ping | < 100 ms |
-| Peticiones REST con error | < 1 % |
-
-### ¿Quién aguanta qué?
-
-Cada celda indica las repeticiones que pasaron sobre el total.
+Cada celda indica cuántas repeticiones pasaron sobre el total.
 
 | Entorno | 100 | 300 | 600 | 1.000 | 2.000 | 3.000 | 6.000 |
 |---|---|---|---|---|---|---|---|
-| **PC nativo** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✓ 1/1 | ✓ 1/1 | ✕ 0/3 |
-| **Docker 2 CPU** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✓ 1/1 | ✕ cayó | ✕ cayó 3/3 |
-| **Docker 1 CPU** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✕ 0/1 | ✕ 0/1 | ✕ cayó 3/3 |
-| **AWS Unlimited** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✕ 0/1 | ✕ 0/1 | ✕ cayó 3/3 |
-| **AWS Limited** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3* | ✕ 0/1 | ✕ 0/1 | ✕ 0/1 | ✕ 0/3 |
+| **PC** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✓ 1/1 | ✓ 1/1 | ✕ 0/3, sin caerse |
+| **Docker 2 CPU** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✓ 1/1 | ✕ se cayó | ✕ se cayó 3/3 |
+| **Docker 1 CPU** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✕ 0/1 | ✕ 0/1 | ✕ se cayó 3/3 |
+| **AWS Unlimited** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✕ 0/1 | ✕ 0/1 | ✕ se cayó 3/3 |
+| **AWS Limited** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3, gastando créditos | ✕ 0/1 | ✕ 0/1 | ✕ 0/1 | ✕ 0/3 |
 
-*Pasó gastando créditos acumulados; ver la sección 5.
+Con 600 usuarios todos pasan, así que esa carga sirve para comparar cómo trabaja cada entorno con el mismo esfuerzo (medianas de 3 repeticiones):
 
-Hasta 600 usuarios todos pasan, así que la carga de referencia no distingue a los entornos. Las diferencias aparecen desde 1.000. Los niveles de 1.000 a 3.000 tienen **una sola repetición**, por lo que indican el orden, pero no son un límite exacto.
-
-### Misma carga: 600 usuarios
-
-Valores medianos de las 3 repeticiones.
-
-| Métrica | PC | Docker 2 CPU | Docker 1 CPU | AWS Unlimited | AWS Limited |
+| Con 600 usuarios | PC | Docker 2 CPU | Docker 1 CPU | AWS Unlimited | AWS Limited |
 |---|---|---|---|---|---|
-| REST p50, usuario | 3,2 ms | 3,6 ms | 3,6 ms | 7,2 ms | 6,4 ms |
-| REST p50, dentro del servidor | 2,0 ms | 2,1 ms | 2,1 ms | 4,7 ms | 4,2 ms |
-| Login p50, dentro del servidor | 136 ms | 142 ms | 147 ms | 298 ms | 298 ms |
-| Trazo a los demás, p95 | 0,8 ms | 1,0 ms | 1,1 ms | 4,9 ms | 4,3 ms |
-| Ping, p99 | 0,9 ms | 1,2 ms | 1,9 ms | 12 ms | 7,2 ms |
-| Hilo de JavaScript, promedio | 18 % | 22 % | 22 % | 45 % | 42 % |
-| CPU de JavaScript por mensaje entregado | 12,8 µs | 17,5 µs | 17,1 µs | 35 µs | 32 µs |
-| Memoria del servidor, pico | 283 MB | 249 MB | 263 MB | 257 MB | 265 MB |
+| CPU de toda la máquina, promedio / pico | 7 % / 24 % | 9 % / 27 % | 9 % / 32 % | 30 % / 63 % | 27 % / 52 % |
+| Hilo de JavaScript, promedio / pico | 18 % / 27 % | 22 % / 38 % | 22 % / 45 % | 45 % / 68 % | 42 % / 60 % |
+| Memoria del servidor, promedio / pico | 248 / 283 MB | 232 / 249 MB | 244 / 263 MB | 232 / 257 MB | 229 / 265 MB |
+| Disco, IOPS promedio y MB/s | 50 y 1,6 | 43 y 1,5 | 44 y 1,4 | 28 y 1,9 | 23 y 1,3 |
+| Red, MB/s de salida | 7,8 | 5,6 | 6,1 | 4,8 | 4,7 |
+| REST p50 / p95 / p99 | 3,1 / 30 / 32 ms | 3,5 / 30 / 33 ms | 3,5 / 31 / 35 ms | 7,2 / 51 / 57 ms | 6,4 / 26 / 57 ms |
+| Ping p50 / p95 / p99 | 0,1 / 0,4 / 0,9 ms | 0,2 / 0,6 / 1,2 ms | 0,2 / 0,6 / 1,9 ms | 0,5 / 3,5 / 12 ms | 0,5 / 2,8 / 7,2 ms |
+| Login p50 | 136 ms | 142 ms | 147 ms | 298 ms | 298 ms |
 
-### Dónde empieza a fallar cada uno
+## 5. Respuestas por entorno
 
-| Entorno y carga | Conectados | Hilo JS | Ping p99 | Errores REST | Resultado |
-|---|---|---|---|---|---|
-| PC, 3.000 | 2.825 | 79 % | 47 ms | 0 % | Pasa |
-| Docker 2 CPU, 2.000 | 1.856 | 75 % | 65 ms | 0 % | Pasa |
-| Docker 1 CPU, 1.000 | 959 | 33 % | 22 ms | 0 % | Pasa |
-| Docker 1 CPU, 2.000 | 1.901 | 69 % | **227 ms** | 0 % | Falla solo por ping |
-| AWS Unlimited, 1.000 | 976 | 74 % | 53 ms | 0 % | Pasa |
-| AWS Unlimited, 2.000 | 1.879 | 97 % | **1,05 s** | **15,5 %** | Falla |
-| AWS Limited, 1.000 (sin créditos) | 628 | 90 % | **3,7 s** | **80,5 %** | Falla |
+### PC nativo
 
-### Server killer: 6.000 usuarios
+**¿Aguanta la carga?** Sí, hasta 3.000 usuarios. Es el único que pasa todas las pruebas de capacidad. Con 6.000 falla, pero no se cae.
 
-| Entorno | ¿Se cayó? | Causa y momento | Conectados | Ping p99 |
+**¿Dónde espera?** En la **CPU**, y concretamente en **un solo núcleo**: el que ejecuta el hilo de JavaScript. Con 3.000 usuarios ese hilo va al 79 % mientras la máquina entera está al 17 %. Le sobran núcleos, pero el servidor no puede usarlos.
+
+**¿Por qué ese número?** El costo de reenviar un mensaje es casi constante: unos **12,8 µs** de CPU por cada mensaje entregado, desde 600 hasta 3.000 usuarios. Con ese costo, el hilo llegaría al 100 % en unos 78.000 mensajes por segundo, que con esta mezcla de actividad son unos 3.600 usuarios. El PC llega lejos porque sus P-cores son los más rápidos medidos (4,5 GHz) y porque tiene 15 GB, así que la memoria nunca lo limita.
+
+**¿Qué le sobra y qué le falta?** Le sobran núcleos, memoria (el servidor llegó a 816 MB en el peor caso), disco y red. Le falta lo que no se mide en una prueba: IP fija, disponibilidad las 24 horas y respaldo eléctrico.
+
+**Si la carga se multiplica por diez:** el hilo se satura (99 %). El proceso sigue vivo, pero las peticiones esperan tanto en la fila que el 38 % llega al tiempo límite de 15 s. Entran unas 4.130 personas de 6.000, con un ping p99 de ~1 s.
+
+### Docker 2 CPU
+
+**¿Aguanta la carga?** Hasta 2.000 usuarios. Con 3.000 se cae a los 5,5 minutos.
+
+**¿Dónde espera?** Primero en el hilo de JavaScript (75 % con 2.000), como el PC, y después en la **memoria**. Con 512 MB, V8, el motor de JavaScript de Node, limita su espacio de objetos (*heap*) a cerca de la mitad del contenedor. Cuando lo llena, el proceso muere con «heap limit», sin que el kernel intervenga.
+
+**¿Por qué ese número?** Usa los mismos P-cores que el PC, así que con poca carga rinde casi igual. Lo que lo frena antes son los dos límites configurados: la cuota de CPU, que con 2 CPU casi no actúa (16 ms de freno por segundo con 2.000 usuarios), y los 512 MB.
+
+**¿Qué le sobra y qué le falta?** Le sobra CPU: con 2.000 usuarios no la agota. Le falta memoria.
+
+**Si la carga se multiplica por diez:** se cae entre los 55 y los 88 segundos por falta de heap.
+
+**Costo:** el plan equivalente (Render Pro, 2 CPU y 4 GB) cuesta USD 85 al mes, sin contar la base de datos.
+
+### Docker 1 CPU
+
+**¿Aguanta la carga?** Hasta 1.000 usuarios. Con 2.000 falla solo por el p99 del ping (227 ms), sin errores REST.
+
+**¿Dónde espera?** En la **cuota de CPU**, es decir, en el límite configurado, no en el hardware. Con 2.000 usuarios, el kernel congeló el contenedor 128 ms de cada segundo mientras la máquina estaba al 19 % de uso. Cada vez que el contenedor gasta sus 100 ms antes de tiempo, todo se detiene hasta el siguiente periodo, y los mensajes que llegan en ese hueco esperan. Por eso la mediana sigue baja (REST p50 de 6,4 ms) y solo el p99 lo delata.
+
+**¿Qué le sobra y qué le falta?** Le sobra hardware: la máquina está casi libre. Le falta cuota de CPU y, con más carga, memoria.
+
+**Si la carga se multiplica por diez:** se cae entre los 52 y los 77 segundos, por el heap de V8, igual que el de 2 CPU.
+
+**Costo:** USD 25 al mes (Render Standard). Da la misma capacidad que la t3.small y cuesta más.
+
+### AWS Unlimited
+
+**¿Aguanta la carga?** Hasta 1.000 usuarios, sin margen: el hilo de JavaScript ya va al 74 %. Con 2.000 falla el 15,5 % de las peticiones.
+
+**¿Dónde espera?** En la **CPU**. Con 2.000 usuarios el hilo va al 97 % y el ping p99 pasa de 53 ms a 1,05 s.
+
+**¿Por qué ese número?** Cada mensaje cuesta unos **35 µs** de CPU, 2,7 veces más que en el PC, y cada login tarda 255-298 ms contra 136 ms. Hay dos razones de hardware. La primera es que el núcleo es más lento (2,5 GHz de base contra 4,5 GHz). La segunda es que las 2 vCPU son **un solo núcleo físico**: cuando Node, los hilos del login y MongoDB trabajan a la vez, compiten por las mismas unidades de ejecución y la misma caché. El login sirve de comparación limpia, porque siempre hace el mismo cálculo: scrypt recorre al azar 16 MB de memoria, un bloque que no cabe en la caché del núcleo, así que depende de la caché y de la RAM, y tarda unas 2 veces más.
+
+La latencia sube de golpe cerca del límite por la **fila** del hilo. Cada mensaje espera a que el hilo termine lo que tiene delante. Por teoría de colas, esa espera crece como ρ / (1 − ρ), donde ρ es la fracción del tiempo que el hilo está ocupado: con ρ = 0,75 es 3 veces el tiempo de trabajo y con ρ = 0,97 es 32 veces.
+
+**¿Qué le sobra y qué le falta?** Le sobran disco y red: el disco promedió menos de 100 IOPS de sus 3.000, y la red llegó a 15 MB/s de salida con 2.000 usuarios, cerca de su base de 16 MB/s, cuando el hilo ya estaba saturado. Le faltan CPU por núcleo y RAM.
+
+**Si la carga se multiplica por diez:** primero se satura el hilo y después se acaba la RAM. El servidor (~690 MB) y MongoDB (~700 MB) agotan los 1,9 GB, y el kernel los mata entre los 7,7 y los 11,3 minutos. En una repetición mató primero a MongoDB.
+
+**Costo:** USD 20,43 al mes, más el excedente de CPU si la carga se sostuviera todo el mes: unos USD 5 con 600 usuarios y unos USD 20 con 1.000. Es una estimación a USD 0,05 por vCPU-hora; una carga real tiene horas valle.
+
+### AWS Limited
+
+**¿Aguanta la carga?** 300 usuarios de forma sostenida. Pasó la de 600, pero gastando créditos acumulados en las pruebas anteriores. Con 1.000 falla el 80,5 % de las peticiones.
+
+**¿Dónde espera?** En los **créditos de CPU**. Gana 24 créditos por hora, que equivalen a 0,4 vCPU, cerca del 20 % de la máquina. Cuando se acaban, AWS le retira el resto: el *steal* (tiempo que la máquina virtual quería CPU y el hipervisor no se la dio) sube a ~60 %, y la CPU útil queda en 16-19 %, justo su base.
+
+**¿Por qué ese número?** Con 100 y 300 usuarios usa 6 % y 15 % de la máquina, por debajo de la base, y puede sostenerlos indefinidamente. Con 600 usa ~27 %, por encima. Por proyección lineal, sin haberlo medido, su límite sostenido estaría en unos 400-450 usuarios.
+
+**¿Qué le sobra y qué le falta?** Le sobra todo excepto CPU sostenida.
+
+**Si la carga se multiplica por diez:** no se cae, pero solo porque, con la CPU recortada, entran muchos menos usuarios (~1.370) y la memoria no alcanza a agotarse. Con un ping p99 de ~10 s no es utilizable.
+
+**Costo:** USD 20,43 al mes, sin excedente.
+
+## 6. Respuestas generales para la aplicación
+
+### ¿Dónde está esperando Shareboard? ¿Por CPU, por disco o por red?
+
+**Por CPU**, y en particular por **un solo núcleo**: el que ejecuta el hilo de JavaScript, que recibe y reenvía cada mensaje de tiempo real. La prueba está en los números. En el PC, con 3.000 usuarios, ese hilo va al 79 % con la máquina al 17 %. En AWS, el mismo trabajo cuesta 2,7 veces más porque el núcleo es más lento. Fuera de ese límite, cada entorno tiene el suyo: la cuota y el heap en los contenedores, la RAM en AWS Unlimited y los créditos en AWS Limited.
+
+**El disco no es el límite.** Los tableros activos están en RAM y los cambios se guardan agrupados cada segundo. En todas las pruebas, fuera de una, el disco promedió menos de 130 IOPS y menos de 8 % de ocupación, con una espera de disco de 2 % o menos. La excepción es el server killer de AWS Unlimited, donde llega a 1.014 IOPS, pero cuando la máquina ya se está quedando sin RAM: es un síntoma, no la causa.
+
+**La red tampoco**, aunque sería la siguiente. En AWS, con 2.000 usuarios, la salida llega a 15 MB/s, cerca de la base de 16 MB/s de la t3.small, pero ahí la CPU ya está saturada.
+
+### ¿Por qué ese número y no otro? ¿Cómo se midió?
+
+Cada número sale de una prueba sostenida de 600 s medida con el agente sobre los archivos del kernel, con los guiones y los datos crudos en el repositorio. Los límites de capacidad salen de dividir la CPU del hilo entre los mensajes que entrega por segundo: ese costo es casi constante, así que el techo de cada máquina es su velocidad por núcleo dividida entre el trabajo por mensaje. Ningún número de rendimiento viene de internet.
+
+### ¿Qué componente del computador causa cada comportamiento?
+
+- **La velocidad de un núcleo** decide la capacidad del tiempo real, porque Node ejecuta el JavaScript en un solo hilo. Por eso el PC, con núcleos de 4,5 GHz, aguanta 3 veces más que AWS.
+- **La caché y la RAM** deciden cuánto tarda un login: scrypt recorre 16 MB al azar y cada lectura que no está en la caché va a la RAM.
+- **El hyperthreading** de AWS hace que dos vCPU no sean dos núcleos: Node, los hilos de login y MongoDB compiten por el mismo núcleo físico.
+- **Los límites del cgroup** en los contenedores congelan el proceso al gastar su cuota de CPU y lo matan al llenar su heap, aunque el hardware tenga recursos libres.
+- **Los créditos de CPU** en AWS Limited recortan la máquina a su 20 % de base.
+- **La parte secuencial** del trabajo, la que solo puede ejecutar un hilo, pone el techo final: para sostener 6.000 usuarios en el PC harían falta ~1,7 núcleos de JavaScript, y un proceso de Node solo usa uno.
+
+### Si la carga se multiplicara por diez, ¿qué se rompería primero?
+
+Server killer es exactamente eso: la carga alta (600) multiplicada por diez (6.000). En los contenedores se rompe primero la memoria, en poco más de un minuto. En AWS Unlimited se satura el hilo y después se acaba la RAM, a los 7,7-11,3 minutos. En AWS Limited se acaban los créditos en el minuto 2 o 3. En el PC se satura el hilo, sin caerse. En todos, lo que falla para el usuario es **entrar**: listar y unirse a un tablero llegan al tiempo límite de 15 s, porque sus peticiones esperan en la misma fila del hilo que el tiempo real.
+
+### ¿Qué opción se descarta y por qué?
+
+- **Docker 1 CPU**: falla con 2.000 usuarios con la máquina casi libre, por su cuota, y cuesta más que la t3.small (USD 25 contra USD 20,43) con la misma capacidad medida.
+- **AWS Limited para más de 300 usuarios**: cuando se acaban los créditos pasa de funcionar a fallar casi todo. Sirve para la carga de referencia o para picos cortos.
+- **El PC para producción**: es el más capaz, pero no tiene IP fija, disponibilidad 24/7 ni redundancia.
+
+### Recomendación
+
+Para la carga de referencia (300 usuarios), la opción más barata que la pasa es la **t3.small en modo Limited**, a USD 20,43 al mes: usa el 15 % de la máquina, por debajo de su base. Si se esperan 600 usuarios o picos, conviene la **t3.small Unlimited**, con un excedente estimado de hasta USD 5 al mes. Para 1.000 usuarios, con el código original, la t3.small Unlimited va sin margen. Por encima de 2.000, ninguna opción medida con un solo proceso de Node tiene margen por mucho tiempo: hay que cambiar el código.
+
+## 7. Cambios en el servidor y mejoras visibles
+
+### Qué se cambió
+
+Las mediciones dijeron dónde atacar: el hilo de JavaScript. Un perfil del servidor con 3.000 usuarios mostró que el 46 % del tiempo de ese hilo se iba en **una llamada al kernel (`writev`) por cada mensaje y cada destinatario**. Cada llamada al kernel tiene un costo fijo: el procesador deja el programa, entra al kernel, copia los datos al socket y vuelve. En un tablero de 30 personas, un trazo eran 29 llamadas, y con cursores cada 45 ms y vistas previas cada 33 ms se juntaban miles por segundo.
+
+Se hicieron cuatro cambios, con el servidor todavía en **un solo proceso de Node**:
+
+1. **Escrituras agrupadas.** Si a una persona le llegan varios mensajes en la misma vuelta del *event loop* (el ciclo en el que Node atiende el trabajo pendiente), ahora se escriben con una sola llamada al kernel. Cuanta más carga hay, más mensajes caben en cada vuelta y más se ahorra.
+2. **Serializar una vez.** Antes, cada mensaje se convertía a texto (`JSON.stringify`) una vez por destinatario; ahora una sola vez para todos.
+3. **El PIN con HMAC.** El PIN del tablero ya no usa `scryptSync` en el hilo principal, sino un HMAC, una firma con una clave secreta del servidor que se calcula en microsegundos. Un hash lento no protege un PIN de 4 a 12 dígitos: lo protege el límite de intentos, y sin la clave secreta una base filtrada no se puede probar fuera de línea.
+4. **Contraseñas con Argon2id** en lugar de scrypt, con los parámetros mínimos de OWASP, que lo pone como primera opción. Necesita Node 24.
+
+La campaña se repitió con las mismas pruebas, los mismos datos y las mismas repeticiones: PC y Docker el 7 de noviembre, AWS Unlimited esa misma noche. Hubo un tropiezo en el camino: la primera versión del cambio esperaba 25 ms para juntar más mensajes, y eso sumó 25 ms a cada trazo en todos los entornos. Se corrigió para que no espere nada, y las cifras de esta sección son de la versión corregida.
+
+### Qué mejoró
+
+**El hilo de JavaScript trabaja menos con la misma carga.** En el PC, con 3.000 usuarios, bajó del 79 % al 63 %. En AWS Unlimited, con 1.000 usuarios, del 74 % al 51 %, y con 600 del 45 % al 31 %. AWS es donde más se nota, porque era el entorno donde cada mensaje costaba más.
+
+**La latencia cerca del límite cae entre 5 y 15 veces.** Que el hilo trabaje un 15 o 20 % menos no explicaría por sí solo una mejora tan grande. La razón es la fila: cerca del 100 % la espera crece muy rápido, y bajar de 97 % a 90 %, o de 79 % a 63 %, aleja al servidor de ese borde.
+
+**En EC2 la t3.small dejó de rechazar a la gente.** Con 2.000 usuarios, los errores REST bajaron del 15,5 % a 0 %, y entrar a un tablero pasó de 15 s a 131 ms. Con 3.000, los errores bajaron del 50,9 % a 0 % y lograron conectarse 2.888 personas, contra 2.119.
+
+**El login es 5 veces más rápido** en todos los entornos: de 136-166 ms a 23-26 ms en el PC y en Docker, y de 255-408 ms a 49-57 ms en AWS. Argon2id da una protección equivalente según OWASP. La explicación probable de que cueste menos, sin aislarla, es que recorre su memoria por bloques grandes y de forma más predecible, y el procesador puede adelantar las lecturas en vez de esperarlas una por una.
+
+**Desapareció el escalón de 30 ms en REST.** Con poca carga, el p95 de REST tenía un escalón fijo de ~30 ms: era el PIN congelando el hilo. En el PC bajó de 30 ms a 6-7 ms.
+
+**Docker 1 CPU ahora pasa la prueba de 2.000 usuarios**, que antes fallaba por el freno de su cuota.
+
+| Antes → después | PC | Docker 2 CPU | Docker 1 CPU | AWS Unlimited |
 |---|---|---|---|---|
-| PC | No (0/3) | Hilo JS al 99 %, 38 % de errores REST | ~4.130 | ~1 s |
-| Docker 1 CPU | Sí (3/3) | Sin heap de V8, a los 52-77 s | – | – |
-| Docker 2 CPU | Sí (3/3) | Sin heap de V8, a los 55-88 s | – | – |
-| AWS Unlimited | Sí (3/3) | Sin RAM (OOM del kernel), a los 7,7-11,3 min | 1.240-2.240 | 1,1-5,2 s |
-| AWS Limited | No (0/3) | Casi todas las peticiones fallan | ~1.370 | ~10,6 s |
+| Carga más alta que pasa | 3.000 → 3.000, con el hilo al 63 % | 2.000 → 2.000 | 1.000 → **2.000** | 1.000 → 1.000, con el hilo al 51 %; 2.000 sin errores |
+| Hilo JS con 2.000 usuarios | 51 % → 40 % | 75 % → 63 % | 69 % → 59 % | 97 % → 90 % |
+| Ping p99 con 2.000 | 5,9 → 1,6 ms | 65 → 14 ms | 227 → 92 ms | 1.047 → 147 ms |
+| Trazo a los demás p95 con 2.000 | 2,4 → 1,3 ms | 16 → 5 ms | 70 → 33 ms | 459 → 51 ms |
+| Login p50 con 600 | 136 → 24 ms | 142 → 25 ms | 147 → 24 ms | 298 → 53 ms |
+| Con 3.000 usuarios | Pasa → pasa | Se cayó → se detuvo por memoria | 63 % de errores → se detuvo por memoria | 50,9 % de errores → **0 %** |
 
-En ninguna carga el disco fue el límite: fuera del killer de AWS Unlimited, los promedios se quedaron por debajo de 130 IOPS y de 8 %util, con espera de disco de unos 2 % o menos. En ese killer sí sube (hasta 1.014 IOPS y 25 %util de promedio, en la repetición donde MongoDB se reinició), pero aparece cuando la máquina ya se está quedando sin RAM: es un síntoma de esa falta de memoria, no la causa.
+Los datos crudos están en `data/raw/` (PC y Docker, desde el 7 de noviembre a las 09:53) y en `resultados/2026-11-07/aws-unlimited/`. El detalle de cada cambio está en [CAMBIOS-SERVIDOR.md](CAMBIOS-SERVIDOR.md) y todas las cifras en [MEJORAS.md](MEJORAS.md).
 
-## 5. Qué cambia entre entornos y por qué
+## 8. Dónde falla ahora y qué falta
 
-El orden de capacidad es:
+**La memoria es el nuevo primer límite.** El servidor optimizado usa entre 30 % y 80 % más memoria: en el PC, con 3.000 usuarios, pasó de 529 a 944 MB, y en AWS de 550 a 651 MB. En los contenedores de 512 MB esto ahora llega antes que el límite de CPU. Con 3.000 usuarios el contenedor pasa del 95 % de su memoria a los ~4 minutos y el laboratorio detiene la prueba, cuando el hilo todavía iba al 79 %. En server killer pasa a los 50-70 segundos, como antes. En AWS, con server killer, la RAM se acaba a los ~3,3 minutos en lugar de 7,7-11,3, porque cada persona cuesta menos CPU, entra más gente más rápido y cada una ocupa más memoria. La causa de la memoria extra **no está confirmada**. Hay tres sospechosos sin aislar: Node 24, que maneja el heap distinto que Node 22; Argon2id, que reserva 19 MiB por cada login en curso; y las colas de mensajes por persona. Es lo siguiente que hay que investigar, y lo primero que conviene probar son contenedores de 1 GB o un tope de heap ajustado (`--max-old-space-size`).
 
-**PC (3.000) > Docker 2 CPU (2.000) > Docker 1 CPU y AWS Unlimited (1.000) > AWS Limited (300 sostenibles, 600 con créditos).**
+**El PC sigue sin poder con 6.000 usuarios.** Ahora entran 5.292 personas, contra 4.127, con un ping p99 de 85 ms en lugar de ~1 s, pero el hilo sigue al 99,8 % y el 29-37 % de las peticiones REST llega al tiempo límite. Es el techo de la parte secuencial: un solo hilo de JavaScript no da para tanto. El servidor ya puede repartir los tableros entre varios procesos de Node (`WORKERS`), pero ese modo no se midió en esta campaña.
 
-No hay una sola causa: cada entorno se queda sin algo distinto.
+**Con poca carga hay un costo pequeño.** Con 100 usuarios, el trazo a los demás tarda 0,2-0,4 ms más y la CPU del servidor sube un poco (de 4,1 % a 5,4 % en el PC). A esa carga casi nunca hay dos mensajes para la misma persona en una vuelta, así que agrupar no ahorra nada y solo agrega la gestión de la cola. Nadie lo nota.
 
-### Por qué el PC es el más fuerte
+**Entrar a un tablero con PIN sigue en ~31 ms con poca carga**, pero es un efecto de la prueba: la base se restaura antes de cada corrida con los PIN guardados al estilo antiguo, y la primera entrada a cada tablero todavía los verifica con scrypt antes de reescribirlos como HMAC. En uso real eso pasa una sola vez por tablero.
 
-El factor decisivo es la **velocidad de un solo núcleo**. Como casi todo el trabajo pasa por un hilo de JavaScript, importa más un núcleo rápido que tener muchos. Los P-cores del Core Ultra 5 125H llegan a 4,5 GHz y son los que entregan más trabajo por hilo:
+**Falta medir AWS Limited con el código nuevo.** La repetición no tuvo CPU retirada (*steal* ≈1 %, contra 54-71 % en la original): la instancia no se quedó sin créditos y se comportó como Unlimited, así que no se usó. Hay que repetirla en modo Standard con los créditos agotados. Mientras tanto, la recomendación para Limited sigue con los datos del código original.
 
-- Cada mensaje entregado cuesta **12,8 µs** de CPU en el PC y **unos 35 µs** en AWS, 2,7 veces más.
-- En el PC el hilo llega al 79 % con 2.825 usuarios. AWS Unlimited llega al 74 % con solo 976.
-
-El PC tampoco tiene un tope duro de memoria: tiene 15 GB, y en el killer el servidor llegó a 816 MB sin caer. Por eso se degrada sin morir: con el hilo saturado rechaza peticiones por tiempo de espera, pero el proceso sigue vivo.
-
-### Docker: mismo hardware, pero con límites
-
-Docker usa los mismos P-cores, por eso con poca carga es casi igual al PC. Lo distinguen dos límites:
-
-- **Cuota de CPU.** "1 CPU" no reserva un núcleo: el kernel da 100 ms de CPU cada 100 ms y, si el proceso los gasta antes, congela **todo el contenedor** hasta el siguiente periodo. Con 2.000 usuarios, Docker 1 CPU tuvo 128 ms/s de freno. Sin errores REST, su ping p99 subió a 227 ms con la máquina mayormente libre (uso total del 19 %). Con 2 CPU, el freno baja a 16 ms/s y la misma carga pasa. La causa no es falta de hardware sino el límite configurado.
-- **Memoria.** Con 512 MB, V8 limita su heap a cerca de la mitad del límite del contenedor. Por eso Docker 2 CPU cae con 3.000 usuarios (a los 332 s) y ambos caen en el killer en poco más de un minuto. El proceso muere por falta de heap, no porque el kernel lo mate. Es un límite configurable, aunque no probamos otro valor.
-
-A igual carga, el hilo de JavaScript cuesta algo más que en el PC (17 frente a 12,8 µs por mensaje). La causa probable es la red del contenedor, pero no la aislamos. MongoDB también va limitado en este modo (1 CPU, 1 GB), lo que no ocurre en el PC ni en AWS.
-
-### AWS: la CPU es más lenta y hay un solo núcleo físico
-
-La t3.small es la más débil en CPU por dos razones:
-
-- **2 vCPU no son 2 núcleos.** Son dos hilos de hyperthreading de **un solo núcleo físico** (Xeon Platinum 8259CL a 2,5 GHz de base). Cuando Node, los hilos de login y MongoDB coinciden, compiten por las mismas unidades de ejecución y la misma caché.
-- **Frecuencia y caché menores.** El login, que siempre hace el mismo cálculo, sirve para comparar: tarda 136 ms en el PC y 255-298 ms en AWS, unas 2 veces más. scrypt recorre 16 MB de memoria al azar, por lo que también depende de la caché y de la RAM.
-
-También cambia cómo falla: con 1,9 GB, el servidor (~690 MB) y MongoDB (~700 MB) llegan a dejar sin RAM a la máquina. El kernel los mata, y en una de las repeticiones mató primero a MongoDB. Docker había fallado por el heap de V8; aquí falla toda la máquina.
-
-### AWS Unlimited frente a AWS Limited
-
-Son la misma instancia con reglas distintas de CPU:
-
-| | Unlimited | Limited |
-|---|---|---|
-| CPU sin créditos | Sigue al 100 %, paga el excedente | Queda en la base: **~20 % de la máquina** (0,4 vCPU) |
-| Créditos | Da igual el saldo | Gana 24 por hora, se gastan al pasar de la base |
-| Steal (CPU retirada) | ~0,3 % | **~60 %** al agotar créditos |
-
-Medimos el recorte directamente: en el killer el steal es 0 % al inicio y salta a ~60 % en el minuto 2-3, cuando se acaban los créditos. Desde ahí, la CPU útil queda en 16-19 % de la máquina, lo que coincide con la base de 20 %.
-
-Tres matices para leer bien estos resultados:
-
-- **Con 100 y 300 usuarios no hay diferencia real.** Usan 6 % y 15 % de la máquina, por debajo de la base, así que Limited los puede sostener indefinidamente.
-- **Con 600 usuarios Limited pasa, pero gastando reserva.** Usa ~27 %, por encima del 20 %. Pasó porque venía de ganar créditos en las pruebas anteriores. Sin reserva no los sostendría indefinidamente; por proyección lineal, el límite sostenido estaría en unos 400-450 usuarios, sin haberlo medido.
-- **Las pruebas de capacidad de Limited son su peor caso.** Empezaron justo después de un killer, sin créditos. Con reserva habría rendido como Unlimited hasta gastarla.
-
-Limited no se cayó en el killer (0 de 3), mientras Unlimited cayó las 3 veces. No es que sea más robusto: con la CPU recortada entran menos usuarios (~1.370 frente a un máximo de ~2.240) y la memoria no llega a agotarse. Sobrevive, pero con un ping p99 de ~10 s no es utilizable.
-
-### Por qué uno tiene mejor latencia que otro
-
-La latencia que ve el usuario suma varios tiempos, y cada entorno aporta distinto a cada uno:
-
-| Origen | Qué es | Dónde pesa |
-|---|---|---|
-| **Velocidad de la CPU** | Lo que tarda el trabajo en sí | AWS: REST interno p50 de 4,7 ms frente a 2,0 ms en el PC, con 600 usuarios |
-| **Fila del hilo de JavaScript** | Lo que espera un mensaje antes de procesarse | Crece muy rápido cerca del 100 %. AWS Unlimited pasa de ping p99 53 ms (hilo 74 %) a 1,05 s (hilo 97 %) |
-| **Red** | El viaje entre generador y servidor | Pequeña: ping p50 de 0,5 ms en AWS frente a 0,1-0,2 ms local, con 600 usuarios |
-| **Freno de cuota** | El contenedor congelado hasta el próximo periodo | Docker 1 CPU: aparece en p99 sin subir la mediana (REST p50 6,4 ms, ping p99 227 ms) |
-| **Steal por créditos** | Tiempo que AWS le quita a la instancia | AWS Limited sin créditos: REST p50 llega a los 15 s de tiempo límite |
-| **PIN con `scryptSync`** | Bloquea el hilo durante el cálculo | Produce el escalón del p95 de REST: ~30 ms en el PC, ~50 ms en AWS |
-
-Por eso una mediana baja no garantiza buena experiencia, y el p95 y el p99 revelan problemas antes: Docker 1 CPU tiene buen p50 con 2.000 usuarios, y solo su p99 muestra el freno.
-
-Una aclaración sobre AWS: su latencia de usuario incluye una red real, mientras el PC y Docker usan la interfaz local. Para comparar solo el servidor, conviene mirar las cifras "dentro del servidor". En AWS también cuentan las actualizaciones automáticas: en una repetición de 600 usuarios, Ubuntu instaló paquetes durante 2 minutos y el ping p99 subió a 96 ms en ese tramo, frente a 8 ms en el resto.
-
-## 6. Después de optimizar el servidor
-
-Las secciones 4 y 5 muestran **dónde espera** Shareboard: en el único hilo de JavaScript y, en los entornos con poca memoria, en la RAM. Con eso se cambió el código del servidor para atacar esos límites y se repitió la campaña completa con las mismas pruebas, los mismos datos y las mismas repeticiones. El detalle de cada cambio está en [CAMBIOS-SERVIDOR.md](CAMBIOS-SERVIDOR.md).
-
-### Qué se cambió y qué componente ataca
-
-| Cambio | Antes | Ahora | Componente que alivia |
-|---|---|---|---|
-| **Escribir a los sockets** | Una llamada al kernel (`writev`) por cada mensaje y cada destinatario: el 46 % del hilo de JavaScript con 3.000 usuarios | Los mensajes de cada persona se juntan y se escriben de una vez al final de cada vuelta del event loop | El **hilo de JavaScript** y el paso entre el programa y el kernel |
-| **Serializar** | `JSON.stringify` una vez por destinatario | Una vez por mensaje, el mismo texto para todos | El hilo de JavaScript |
-| **PIN del tablero** | `scryptSync` en el hilo principal: lo congelaba ~30-50 ms | Un HMAC (una firma con una clave secreta), en microsegundos | El hilo de JavaScript |
-| **Contraseñas** | scrypt (16 MB recorridos al azar) | Argon2id (19 MiB, 2 pasadas), la primera opción de OWASP | El **threadpool**, la **caché** y la **RAM** |
-
-Se mantuvo **un solo proceso de Node** (`WORKERS=1`): las mejoras de esta sección no vienen de usar más núcleos, sino de hacer menos trabajo por mensaje.
-
-### Cómo se volvió a medir
-
-- **Mismas pruebas y repeticiones.** 3 repeticiones de baja, media, alta y server killer, y 1 de capacidad 1.000, 2.000 y 3.000, en PC, Docker 1 CPU, Docker 2 CPU y AWS Unlimited.
-- **Fechas.** PC y Docker el 7-nov, de 09:53 a 19:05, con la máquina sin otra tarea. AWS Unlimited el 7-nov, de 20:26 a 23:58. Datos crudos en `data/raw/` y `resultados/2026-11-07/aws-unlimited/`.
-- **Un cambio que no es del código.** Node pasó de la versión 22 a la 24, necesaria para Argon2id. Parte de las diferencias puede venir de ahí.
-- **AWS Limited no se pudo comparar.** La repetición no tuvo CPU retirada (steal ≈1 %, frente al 54-71 % del 5-nov): la instancia no se quedó sin créditos, así que se comportó como Unlimited. Para medir Limited hay que repetirla en modo Standard con los créditos agotados.
-- **Un tropiezo en la primera repetición.** La primera versión del cambio esperaba 25 ms para juntar más mensajes, y eso sumó 25 ms a cada trazo en todos los entornos. Se corrigió para que no espere nada, y los números de esta sección son de la versión corregida.
-
-### ¿Quién aguanta qué, ahora?
-
-| Entorno | 100 | 300 | 600 | 1.000 | 2.000 | 3.000 | 6.000 |
-|---|---|---|---|---|---|---|---|
-| **PC nativo** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✓ 1/1 | ✓ 1/1 | ✕ 0/3 |
-| **Docker 2 CPU** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✓ 1/1 | ✕ memoria | ✕ memoria 3/3 |
-| **Docker 1 CPU** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | **✓ 1/1** (antes ✕) | ✕ memoria | ✕ memoria 3/3 |
-| **AWS Unlimited** | ✓ 3/3 | ✓ 3/3 | ✓ 3/3 | ✓ 1/1 | ✕ solo por ping p99 (145 ms) | ✕ 0/1 | ✕ cayó 3/3 |
-
-«✕ memoria» significa que el contenedor pasó del 95 % de sus 512 MB y el laboratorio detuvo la prueba antes de que el proceso muriera. Ocurrió a los ~4 min en la de 3.000 y a los 50-70 s en server killer.
-
-### La mejora principal: el hilo de JavaScript trabaja menos
-
-Con el mismo número de usuarios, el hilo de JavaScript pasa menos tiempo ocupado:
-
-| Entorno y carga | Hilo JS antes | Hilo JS ahora |
-|---|---|---|
-| PC, 2.000 | 51 % | **40 %** |
-| PC, 3.000 | 79 % | **63 %** |
-| Docker 1 CPU, 2.000 | 69 % | **59 %** |
-| Docker 2 CPU, 2.000 | 75 % | **63 %** |
-| AWS Unlimited, 600 | 45 % | **31 %** |
-| AWS Unlimited, 1.000 | 74 % | **51 %** |
-| AWS Unlimited, 2.000 | 97 % | **90 %** |
-
-**Por qué.** Cada llamada al kernel tiene un costo fijo: el procesador deja el programa, entra al kernel, copia los datos al socket y vuelve. Antes ese costo se pagaba una vez por mensaje y por destinatario. En un tablero de 30 personas, un trazo eran 29 llamadas, y con cursores cada 45 ms y vistas previas cada 33 ms se juntaban miles por segundo. Ahora, si a una persona le llegan varios mensajes en la misma vuelta del event loop, se escriben con una sola llamada. Cuanta más carga hay, más mensajes caben en cada vuelta y más se ahorra. Por eso la mejora crece con los usuarios.
-
-### Por qué la latencia baja tanto cerca del límite
-
-Que el hilo trabaje un 10 o 20 % menos no explica por sí solo que la latencia baje 5 o 10 veces. La razón es la **fila**. Cada mensaje espera a que el hilo termine lo que tiene delante. Con el hilo al 50 % casi nunca hay fila, pero cerca del 100 % la fila crece muy rápido, porque llega trabajo más rápido de lo que sale (sección 5, «Por qué uno tiene mejor latencia que otro»). Bajar el hilo de 97 % a 90 %, o de 79 % a 63 %, aleja al servidor de ese borde:
-
-| Entorno y carga | Ping p95 / p99, antes | Ping p95 / p99, ahora | Trazo a los demás p95, antes → ahora |
-|---|---|---|---|
-| PC, 3.000 | 14 / 47 ms | **1,6 / 4,3 ms** | 13 → **2,9 ms** |
-| Docker 1 CPU, 2.000 | 116 / 227 ms | **23 / 92 ms** | 70 → **33 ms** |
-| Docker 2 CPU, 2.000 | 19 / 65 ms | **2,9 / 14 ms** | 16 → **5 ms** |
-| AWS Unlimited, 1.000 | 15 / 53 ms | **5,5 / 42 ms** | 13 → **6,9 ms** |
-| AWS Unlimited, 2.000 | 735 / 1.047 ms | **40 / 147 ms** | 459 → **51 ms** |
-| AWS Unlimited, 3.000 | 680 / 1.433 ms | **121 / 287 ms** | 378 → **147 ms** |
-
-### En EC2 es donde más se nota
-
-AWS era el entorno con la CPU más lenta por mensaje (sección 5), y por eso el que más gana cuando cada mensaje cuesta menos:
-
-| AWS Unlimited | Antes | Ahora |
-|---|---|---|
-| **1.000 usuarios**, hilo JS | 74 %, sin margen | **51 %**: le queda casi la mitad |
-| **2.000 usuarios**, errores REST | **15,5 %** | **0 %** |
-| 2.000, entrar a un tablero (p95) | 15 s, el tiempo límite | **131 ms** |
-| 2.000, login p95 | 11,5 s | **186 ms** |
-| **3.000 usuarios**, errores REST | **50,9 %** | **0 %** |
-| 3.000, conectados | 2.119 | **2.888** |
-| 3.000, entrar a un tablero (p95) | 15 s | **276 ms** |
-
-Con 2.000 usuarios la t3.small ya no rechaza a nadie. Solo falla un criterio: el p99 del ping es de 145 ms, contra un límite de 100 ms. Antes, 1 de cada 6 peticiones fallaba.
-
-### Login 5 veces más rápido
-
-| Login p50 | Antes | Ahora |
-|---|---|---|
-| PC y Docker (100 a 1.000 usuarios) | 136-166 ms | **23-26 ms** |
-| AWS Unlimited (100 a 1.000 usuarios) | 255-408 ms | **49-57 ms** |
-
-**Por qué.** Las dos funciones son lentas a propósito, para que adivinar contraseñas cueste. scrypt salta al azar por un bloque de 16 MB, que no cabe en la caché L2 del núcleo, así que muchas lecturas tienen que ir a la caché L3 o a la RAM. Argon2id da una protección equivalente según OWASP. La explicación probable de que cueste menos, sin aislarla, es que recorre su memoria por bloques grandes y de forma más predecible, y así el procesador puede adelantar las lecturas en vez de esperarlas una por una. Las dos corren en el threadpool, fuera del hilo de JavaScript: por eso esta mejora acorta la espera de quien inicia sesión, pero no es la que sube la capacidad del tiempo real.
-
-### Unirse a un tablero ya no congela a los demás
-
-El p95 de REST con poca carga tenía un escalón fijo de ~30 ms en el PC y en Docker. Era el PIN con `scryptSync`: mientras se calculaba, el hilo de JavaScript no atendía a nadie. Ahora el PIN es un HMAC, y ese escalón desaparece:
-
-| REST p95 | Baja | Media | Alta |
-|---|---|---|---|
-| PC | 31 → **7,2 ms** | 20 → **6,4 ms** | 30 → **5,9 ms** |
-| Docker 2 CPU | 9,8 → 9,8 ms | 30 → **7,2 ms** | 30 → **7,5 ms** |
-| Docker 1 CPU | 30 → **13 ms** | 31 → **7,5 ms** | 31 → **6,7 ms** |
-
-Entrar a un tablero con PIN sigue tardando unos 31 ms con poca carga. Es un efecto de la prueba: los datos de prueba se restauran antes de cada corrida con los PIN guardados al estilo antiguo (scrypt), y la primera entrada a cada tablero todavía los verifica así, ya en el threadpool, antes de reescribirlos como HMAC. En uso real eso pasa una sola vez por tablero.
-
-### Lo que empeoró: la memoria
-
-| Memoria del servidor, pico | Antes | Ahora |
-|---|---|---|
-| PC, 600 | 283 MB | 424 MB |
-| PC, 3.000 | 529 MB | 944 MB |
-| AWS Unlimited, 600 | 257 MB | 420 MB |
-| AWS Unlimited, 3.000 | 550 MB | 651 MB |
-| Docker, 3.000 | 448-460 MB | 505-511 MB, de un límite de 512 MB |
-
-Con poca carga, la CPU también sube un poco: en el PC, con 100 usuarios, de 4,1 % a 5,4 %. A esa carga casi nunca hay dos mensajes para la misma persona en una vuelta, así que juntar no ahorra nada y solo agrega la gestión de la cola. Son décimas de milisegundo que nadie nota.
-
-La causa de la memoria extra **no está confirmada**. Hay tres sospechosos, sin aislar: Node 24, que maneja el heap distinto que Node 22; Argon2id, que reserva 19 MiB por cada login en curso (hasta 4 a la vez en el threadpool, ~76 MB); y las colas de mensajes por persona. Lo que sí está medido es el efecto. En los contenedores de 512 MB, **la memoria es ahora el primer límite**, y aparece antes que la CPU: Docker 1 CPU tenía el hilo al 79 % cuando el contenedor llegó al 96 % de su memoria con 3.000 usuarios.
-
-### Si la carga se multiplicara por diez, ahora
-
-| Entorno | Qué se rompe primero | Cuándo | Antes |
-|---|---|---|---|
-| Contenedores | La memoria de 512 MB | 50-70 s | Igual: el heap de V8, a los 52-88 s |
-| AWS Unlimited | La RAM de la máquina | **~3,3 min** | Primero el hilo y luego la RAM, a los 7,7-11,3 min |
-| PC | El hilo de JavaScript (99,8 %): 29-37 % de errores REST, sin caída | Toda la prueba | Igual, pero ahora entran **5.292** personas (antes 4.127) con ping p99 de **85 ms** (antes ~1 s) |
-
-AWS cae antes porque cada persona cuesta menos CPU: entran más rápido, y la memoria, que también subió por persona, se acaba antes. Por encima de los límites de memoria, sigue valiendo lo de la sección 5: un proceso de Node usa un solo núcleo, y ninguna máquina resuelve eso sin varios procesos (`WORKERS`, ya implementado pero no medido en la campaña).
-
-### Qué cambia para la recomendación
-
-- **El orden de capacidad sube un escalón en tres entornos:** PC (3.000, con margen: hilo al 63 %) > Docker 2 CPU y Docker 1 CPU (2.000) > AWS Unlimited (1.000 con margen; 2.000 sin errores, pero con p99 del ping de 145 ms).
-- **La t3.small Unlimited ahora sirve para 1.000 usuarios con margen**, y para 2.000 con algunos tirones ocasionales. Antes, con 1.000 iba al 74 % y con 2.000 fallaba 1 de cada 6 peticiones.
-- **Docker 1 CPU deja de estar por debajo de AWS:** pasa la de 2.000, que antes fallaba por el freno de su cuota.
-- **El siguiente límite es la memoria**, no la CPU. Antes de contratar más núcleos conviene probar contenedores de 1 GB o fijar `--max-old-space-size`, y encontrar qué ocupa la memoria extra.
-- **AWS Limited queda sin medir** con el código nuevo. Su recomendación de la sección anterior sigue con los datos viejos.
+**Node también cambió**, de la versión 22 a la 24, junto con el código, así que parte de las diferencias puede venir de ahí.

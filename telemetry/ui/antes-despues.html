@@ -76,10 +76,10 @@
       <ul>
         <li><b>Misma cantidad de pruebas:</b> «después» usa tantas repeticiones como «antes» (3 en baja, media, alta y killer; 1 en 1.000, 2.000 y 3.000), las primeras que se corrieron.</li>
         <li><b>Colores del cambio (tabla de cada carga):</b> verde = mejoró; rojo = empeoró algo que debía bajar; gris = cambio menor al 10 % (ruido), costo esperado de una mejora, o métrica sin dirección buena (red, disco, us/sy/id).</li>
-        <li><b>El trazo a los demás sube a ~27 ms en estas corridas:</b> el servidor medido esperaba 25 ms para agrupar los envíos (<code>BROADCAST_FLUSH_MS=25</code>), y eso sumó 25 ms a cada mensaje, también en p50. Ya se corrigió: ahora agrupa por vuelta del event loop, sin espera (en una prueba rápida en Docker 1 CPU, alta, op p95 bajó de 31 a 2,8 ms). Falta repetir la campaña.</li>
-        <li><b>La memoria sube ~50 % en todos los entornos:</b> causa sin confirmar (Node 24 y Argon2id son sospechosos).</li>
-        <li><b>El PC no es comparable:</b> en «después» sus núcleos del servidor iban a ~1.500 MHz contra ~2.400 MHz en «antes», y la máquina estaba 2 a 3 veces más ocupada porque manejaba la campaña de AWS a la vez. También cambió Node 22 → 24. Eso explica casi toda la CPU y la latencia REST de más en el PC.</li>
-        <li><b>Falta Docker 2 CPU:</b> un reset lanzado desde fuera dejó al laboratorio ocupado, el cambio de entorno se rechazó y la campaña no lo revisaba (ya lo revisa). La fase de docker1 corrió otra vez en el PC y la de docker2 corrió en docker1; Docker 2 CPU solo tiene las de capacidad «después».</li>
+        <li><b>PC y Docker son la campaña del 7-nov (09:53 a 19:05)</b>, con el servidor corregido: difusión sin espera y PIN con HMAC. Se corrió con el perfil de energía «balanced» y sin nada más en la máquina. Sigue el cambio de Node 22 → 24.</li>
+        <li><b>AWS sigue con las corridas anteriores:</b> esas tenían la espera de 25 ms (<code>BROADCAST_FLUSH_MS=25</code>), y por eso el trazo a los demás se ve en ~27 ms. Falta repetir la campaña allí.</li>
+        <li><b>La memoria sube ~30 a 60 %:</b> la causa no está confirmada (sospechosos: Node 24 y Argon2id). En el contenedor de 512 MB llega al 100 % en server killer y en 3.000, y en la 3.ª repetición de server killer el servidor se cayó.</li>
+        <li><b>Unir con PIN sigue en ~31 ms con poca carga:</b> el seed restaura los PIN viejos (scrypt) antes de cada prueba, así que la primera entrada a cada tablero los verifica y los pasa a HMAC.</li>
         <li><b>Las advertencias de la página Comparar siguen valiendo:</b> REST p95 con poca carga salta entre 7 y 30 ms por azar; 15,1 s es el tope del generador; 1 repetición en las de capacidad.</li>
       </ul>
     </details>

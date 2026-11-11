@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shareboard: pruebas de rendimiento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#0f2a43;--teal:#0b7782;--amber:#f2a93b;--ink:#1b2733;--mut:#56636f;--bg:#f3f6f9;--line:#d9e1ea;
+--ok:#136b3f;--okbg:#e2f3e8;--bad:#b3261e;--badbg:#fbe6e3;--warnbg:#fdf1d9;
+--pc:#1f6feb;--d2:#1a9e6f;--d1:#e8662f;--awu:#d99a00;--awl:#8a4fbf}
+*{box-sizing:border-box;margin:0}
+::selection{background:#cdeef1;color:var(--navy)}
+html,body{height:100%;background:#0a1824;font-family:Inter,"Segoe UI",Calibri,Arial,sans-serif;color:var(--ink);font-variant-numeric:tabular-nums}
+#stage{position:absolute;left:50%;top:50%;width:1280px;height:720px;transform-origin:center}
+.slide{position:absolute;inset:0;background:#fff;display:none;padding:40px 56px 0;overflow:hidden}
+.slide.active{display:block}
+.slide.dark{background:var(--navy);color:#fff}
+h1{font-family:"Source Serif 4",Cambria,Georgia,serif;font-size:36px;font-weight:700;color:var(--navy);line-height:1.12;letter-spacing:-.01em;max-width:1000px;text-wrap:balance}
+.dark h1{color:#fff}
+.sec{position:absolute;right:56px;top:50px;font-size:12px;font-weight:600;color:var(--teal);letter-spacing:.05em;text-transform:uppercase}
+.sub{font-size:16.5px;line-height:1.45;color:var(--mut);margin:8px 0 18px;max-width:1000px}
+.sub b{color:var(--ink)}
+.foot{position:absolute;left:56px;right:56px;bottom:0;height:36px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--mut);border-top:1px solid var(--line)}
+.dark .foot{color:#9db4c8;border-color:#24435f}
+.body{position:absolute;left:56px;right:56px;top:var(--top,150px);bottom:52px}
+.row{display:flex;gap:20px}.col{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--bg);border-radius:12px;padding:16px 18px}
+.card h3{font-size:17px;color:var(--navy);margin-bottom:6px;font-weight:700}
+.card p,.card li{font-size:15px;line-height:1.45}
+.card ul{padding-left:18px}.card li+li{margin-top:3px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.panel h4{font-size:15px;color:var(--navy);font-weight:700}
+.panel .note{font-size:12.5px;color:var(--mut);margin:2px 0 4px}
+.takeaway{font-size:15px;line-height:1.45;color:var(--ink);background:#e6f4f5;border-radius:10px;padding:10px 14px}
+.takeaway b{color:var(--teal)}
+table.t{table-layout:fixed;border-collapse:separate;border-spacing:0;width:100%;font-size:14.5px}
+.t th{background:var(--navy);color:#fff;font-weight:600;padding:8px 8px;text-align:center}
+.t th:first-child{border-radius:8px 0 0 0;text-align:left;width:var(--c1,175px)}.t th:last-child{border-radius:0 8px 0 0}
+.t td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:center;overflow-wrap:anywhere}
+.t td:first-child{text-align:left;font-weight:600;color:var(--navy)}
+.t small{display:block;font-size:12px;color:var(--mut);font-weight:500;line-height:1.25;margin-top:2px}
+.t th small{color:#b9cde0;font-weight:400}
+.t.mini{font-size:13px}.t.mini td{padding:4px 8px}.t.mini th{padding:5px 8px}.t.mini th small{display:none}
+.dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px;vertical-align:middle}
+.pill{display:inline-block;font-weight:700;padding:3px 10px;border-radius:99px;font-size:14px;white-space:nowrap}
+.pill.ok{background:var(--okbg);color:var(--ok)}.pill.no{background:var(--badbg);color:var(--bad)}
+.chg{outline:2px solid var(--teal);outline-offset:-3px;border-radius:6px}
+.shot{border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 18px rgba(15,42,67,.16);background:#fff;display:block}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13.5px;margin:0 0 8px}
+svg{display:block}svg text{font-family:Inter,"Segoe UI",Arial,sans-serif}
+.hb{display:grid;grid-template-columns:150px 1fr;align-items:center;row-gap:12px;column-gap:14px}
+.hb .lab{font-weight:600;color:var(--navy);font-size:15px}.hb .lab small{display:block;font-weight:500;color:var(--mut);font-size:12px}
+.hb .track{position:relative;height:30px}
+.hb .bar{height:30px;border-radius:6px;display:flex;align-items:center;padding:0 10px;font-weight:700;font-size:14.5px;color:#fff;white-space:nowrap}
+.tight .hb{row-gap:7px}.tight .hb .track,.tight .hb .bar,.tight .hb .out{height:26px}.hb.tall{row-gap:20px}.hb.tall .track,.hb.tall .bar,.hb.tall .out{height:38px}.hb.tall .bar{font-size:16px}
+.t.roomy td{padding:13px 8px}.t.roomy .pill{font-size:15.5px;padding:4px 12px}.t.roomy small{font-size:12.5px}
+.hb .out{position:absolute;top:0;height:30px;display:flex;align-items:center;font-size:13.5px;color:var(--mut);white-space:nowrap}
+.envhead{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;color:var(--navy);padding:12px 14px 8px}
+.envhead i{width:12px;height:12px;border-radius:4px;display:inline-block}
+.k{font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:700}
+.g{display:grid;grid-template-columns:118px repeat(5,1fr);column-gap:10px;row-gap:6px;align-items:center}
+.gh{text-align:center;font-weight:700;font-size:14.5px;color:var(--navy)}.gh small{display:block;font-size:11.5px;color:var(--bad);font-weight:600;margin-top:3px;min-height:14px}
+.gk{font-size:12.5px;font-weight:700;color:var(--navy)}.gk small{display:block;font-weight:500;color:var(--mut);font-size:11px;line-height:1.25}
+.mc{text-align:center;font-size:14px;padding:3px 0;border-bottom:1px solid var(--line);white-space:nowrap}.mc .was{color:var(--mut);font-size:12.5px}
+.note2{font-size:13.5px;color:var(--mut);line-height:1.4;margin-top:6px}
+@media print{
+ @page{size:1280px 720px;margin:0}
+ html,body{background:#fff;height:auto}
+ #stage{position:static;transform:none!important;width:1280px;height:auto}
+ .slide{display:block!important;position:relative;height:720px;page-break-after:always}
+}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+const DATA=__DATA__;
+const ENVS=[['pc','PC nativo','#1f6feb','Core Ultra 5 125H · 4,5 GHz'],['docker-2cpu','Docker 2 CPU','#1a9e6f','cuota 2 CPU · 512 MB'],['docker-1cpu','Docker 1 CPU','#e8662f','cuota 1 CPU · 512 MB'],['aws-unlimited','AWS Unlimited','#d99a00','t3.small · 2,5 GHz'],['aws-limited','AWS Limited','#8a4fbf','t3.small · con créditos']];
+const COL=Object.fromEntries(ENVS.map(e=>[e[0],e[2]]));
+const envName=k=>ENVS.find(e=>e[0]===k)[1];
+const TESTS=[['baja',100,'Baja'],['media',300,'Media'],['alta',600,'Alta'],['capacidad-1000',1000,'1.000'],['capacidad-2000',2000,'2.000'],['capacidad-3000',3000,'3.000'],['server-killer',6000,'6.000']];
+const A=(w,e,t)=>(DATA.agg[w]&&DATA.agg[w][e]&&DATA.agg[w][e][t])||null;
+const SER=(w,e,t)=>(DATA.series[w]&&DATA.series[w][e]&&DATA.series[w][e][t])||null;
+const nf=(v,d=0)=>v==null?'—':Number(v).toLocaleString('es-CO',{minimumFractionDigits:d,maximumFractionDigits:d});
+const ms=v=>v==null?'—':v>=15000?'no entra':(v>=100?nf(v,0):v>=10?nf(v,1):nf(v,2));
+const dot=k=>`<span class="dot" style="background:${COL[k]}"></span>`;
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const stopped=a=>a&&((a.died&&a.died.length)||a.crashed);
+const ENV4=ENVS.filter(e=>e[0]!=='aws-limited');
+
+/* ---------- escalas ---------- */
+function niceTicks(hi){const raw=hi/4,p=10**Math.floor(Math.log10(raw)),st=[1,2,2.5,5,10].find(m=>m*p>=raw)*p;const t=[];for(let v=0;v<hi+st*.999;v+=st)t.push(+v.toFixed(6));return t}
+const halo='paint-order="stroke" stroke="#fff" stroke-width="4" stroke-linejoin="round"';
+
+/* gráfico de líneas: x = tiempo (min) o categorías */
+function lines(o){
+  const {w=560,h=250,series,ylog,yfmt=v=>nf(v),thr,ytitle,cats,ramp,endLabels,ymaxFix}=o;
+  const sm=o.small;const m={l:sm?34:62,r:endLabels?96:sm?8:18,t:sm?8:14,b:cats?40:sm?22:36}, W=w-m.l-m.r, H=h-m.t-m.b;
+  const all=series.flatMap(s=>s.data).filter(v=>v!=null&&(!ylog||v>0));
+  let lo,hi,ticks;
+  if(ylog){lo=10**Math.floor(Math.log10(Math.min(...all,thr?thr.v:1e9)));hi=10**Math.ceil(Math.log10(Math.max(...all,thr?thr.v:0)));ticks=[];for(let v=lo;v<=hi;v*=10)ticks.push(v)}
+  else{ticks=niceTicks(ymaxFix||Math.max(...all,thr?thr.v:0));lo=0;hi=ticks[ticks.length-1]}
+  const ty=v=>ylog?m.t+H-(Math.log10(Math.max(v,lo))-Math.log10(lo))/(Math.log10(hi)-Math.log10(lo))*H:m.t+H-(v-lo)/(hi-lo)*H;
+  const n=cats?cats.length:series[0].data.length;
+  const tx=i=>cats?m.l+W*(i+.5)/n:m.l+W*i/(n-1);
+  let g='';
+  if(ramp){const x2=m.l+W*(2.5/12.5);g+=`<rect x="${m.l}" y="${m.t}" width="${x2-m.l}" height="${H}" fill="#eef2f6"/>`+(sm?'':`<text x="${m.l+4}" y="${m.t+H-6}" font-size="11.5" fill="#56636f">llegada</text>`)}
+  const yf=ylog&&!o.yfmt?(v=>v<1?nf(v,1):sm&&v>=1000?nf(v/1000)+' k':nf(v)):yfmt;
+  ticks.forEach(v=>{g+=`<line x1="${m.l}" x2="${m.l+W}" y1="${ty(v)}" y2="${ty(v)}" stroke="#e6ebf0"/><text x="${m.l-6}" y="${ty(v)+4}" text-anchor="end" font-size="${sm?10.5:12}" fill="#56636f">${yf(v)}</text>`});
+  if(cats) cats.forEach((c,i)=>{g+=`<text x="${tx(i)}" y="${m.t+H+18}" text-anchor="middle" font-size="12.5" fill="#1b2733" font-weight="600">${c}</text>`});
+  else {for(let mn=0;mn<=12;mn+=sm?4:2){const x=m.l+W*mn/12.5;g+=`<line x1="${x}" x2="${x}" y1="${m.t+H}" y2="${m.t+H+4}" stroke="#9aa6b2"/><text x="${x}" y="${m.t+H+(sm?15:17)}" text-anchor="middle" font-size="${sm?10.5:12}" fill="#56636f">${mn}${sm&&mn===12?' min':''}</text>`}
+    if(!sm) g+=`<text x="${m.l+W}" y="${m.t+H+32}" text-anchor="end" font-size="11.5" fill="#56636f">minutos de prueba</text>`}
+  if(cats&&o.xtitle) g+=`<text x="${m.l+W}" y="${m.t+H+36}" text-anchor="end" font-size="11.5" fill="#56636f">${o.xtitle}</text>`;
+  series.forEach(s=>{let seg=[],segs=[];s.data.forEach((v,i)=>{if(v==null||(ylog&&v<=0)){if(seg.length)segs.push(seg);seg=[]}else seg.push([tx(i),ty(v)])});if(seg.length)segs.push(seg);
+    segs.forEach(sg=>{g+=`<polyline fill="none" stroke="${s.color}" stroke-width="${s.width||2.4}" ${s.dash?'stroke-dasharray="7 5"':''} stroke-linejoin="round" stroke-linecap="round" points="${sg.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')}"/>`;
+      if(cats) sg.forEach(p=>g+=`<circle cx="${p[0]}" cy="${p[1]}" r="3.6" fill="#fff" stroke="${s.color}" stroke-width="2.2"/>`)})});
+  if(thr){const y=ty(thr.v),ly=y-m.t<18?y+15:y-6;g+=`<line x1="${m.l}" x2="${m.l+W}" y1="${y}" y2="${y}" stroke="#b3261e" stroke-width="1.6" stroke-dasharray="5 4"/>`+(thr.t?`<text x="${m.l+W-4}" y="${ly}" text-anchor="end" font-size="${sm?10.5:12}" font-weight="700" fill="#b3261e" ${halo}>${thr.t}</text>`:'')}
+  if(endLabels){let pts=series.map(s=>{let i=s.data.length-1;while(i>=0&&s.data[i]==null)i--;return {s,y:i>=0?ty(s.data[i]):null}}).filter(p=>p.y!=null).sort((a,b)=>a.y-b.y);
+    for(let i=1;i<pts.length;i++) if(pts[i].y-pts[i-1].y<15) pts[i].y=pts[i-1].y+15;
+    pts.forEach(p=>g+=`<text x="${m.l+W+8}" y="${p.y+4}" font-size="12.5" font-weight="700" fill="${p.s.color}">${p.s.label}</text>`)}
+  if(ytitle) g+=`<text transform="translate(13 ${m.t+H/2}) rotate(-90)" text-anchor="middle" font-size="12" fill="#56636f">${ytitle}</text>`;
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto">${g}</svg>`;
+}
+const legend=items=>`<div class="legend">${items.map(([c,t,d])=>`<span><span class="dot" style="${d?'border:2px dashed '+c+';background:#fff':'background:'+c}"></span>${t}</span>`).join('')}</div>`;
+function capOf(when,k){let c=0;for(const [t,u] of TESTS){const a=A(when,k,t);if(a&&a.pass===a.n)c=u;else break}return c}
+function shortReason(a){
+  if(a.pass===a.n) return '';
+  if(a.died&&a.died.length) return `se cayó a los ${nf(Math.min(...a.died))} s`;
+  const r=(a.reasons[0]||'').replace(/\s*\(.*$/,'');let m;
+  if((m=r.match(/errores ([\d.]+)/))) return `${Math.min(100,+m[1]).toLocaleString('es-CO',{maximumFractionDigits:0})} % de errores`;
+  if((m=r.match(/p99 ping ([\d.]+)/))) return `ping p99 ${nf(+m[1])} ms`;
+  if((m=r.match(/p95 REST ([\d.]+)/))) return `REST p95 ${nf(+m[1])} ms`;
+  if((m=r.match(/p95 difusi[oó]n ([\d.]+)/))) return `trazo p95 ${nf(+m[1])} ms`;
+  return r.replace(/(\d)\.(\d)/g,'$1,$2');
+}
+
+/* ---------- diapositivas ---------- */
+const S=[]; // [html, sección]
+const slide=(sec,title,sub,body,top)=>S.push([`<h1>${title}</h1>${sub?`<div class="sub">${sub}</div>`:''}<div class="body" style="--top:${top||150}px">${body}</div>`,sec]);
+
+// 1 portada
+S.push([`<img src="presentacion/img/icon.png" alt="" style="position:absolute;left:56px;top:56px;width:72px;border-radius:16px">
+ <div style="position:absolute;left:56px;top:190px;width:600px"><div style="font-family:'Source Serif 4',Cambria,serif;font-size:80px;font-weight:700;line-height:1;letter-spacing:-.02em">Shareboard</div>
+ <div style="font-size:28px;line-height:1.3;color:#cadcfc;margin-top:18px">¿Cuántos usuarios aguanta cada servidor y por qué?</div>
+ <div style="font-size:19px;color:var(--amber);margin-top:12px">Pruebas de rendimiento en PC, Docker y AWS</div></div>
+ <div style="position:absolute;left:56px;bottom:70px;font-size:22px;line-height:1.5">Juan Diego López Arias<br>Marlon Alexander Jojoa</div>
+ <img class="shot" src="presentacion/img/board-desktop.png" alt="Tablero de Shareboard" style="position:absolute;right:56px;top:170px;width:500px;border-color:#2c4d6b;box-shadow:0 10px 30px rgba(0,0,0,.35)">
+ <div style="position:absolute;right:56px;top:500px;width:500px;font-size:12.5px;color:#9db4c8">Captura real de la aplicación · ← → para avanzar · F pantalla completa</div>`,'dark']);
+
+// 2 contexto: el código que se prueba
+slide('Contexto','Qué estamos probando','Shareboard es una pizarra colaborativa: varias personas abren el mismo tablero y ven al instante los trazos y cursores de los demás.',
+`<div class="row" style="align-items:flex-start"><div style="flex:1"><table class="t" style="--c1:120px">
+  <tr><th>Pieza</th><th style="text-align:left">Qué es</th></tr>
+  <tr><td>Servidor</td><td style="text-align:left">Node.js 22, <b>un proceso con un solo hilo</b> de JavaScript</td></tr>
+  <tr><td>Base de datos</td><td style="text-align:left">MongoDB 7. Los tableros abiertos viven en memoria y se guardan cada 1 s</td></tr>
+  <tr><td>Clientes</td><td style="text-align:left">Navegador web y celular; con cuenta o como invitado</td></tr>
+  <tr><td>Datos de prueba</td><td style="text-align:left">1.500 cuentas y 2.000 tableros, restaurados antes de cada prueba</td></tr></table>
+ <table class="t" style="--c1:120px;margin-top:16px"><tr><th>Canal</th><th style="text-align:left">Para qué</th><th style="width:190px">Volumen</th></tr>
+  <tr><td>REST · HTTP</td><td style="text-align:left">Login, listar, crear y unirse a un tablero</td><td>menos de 1 petición/s<small>con 300 usuarios</small></td></tr>
+  <tr><td>WebSocket</td><td style="text-align:left">Trazos, cursores, vista previa y ping; una conexión por persona</td><td>casi toda la carga</td></tr></table></div>
+ <div style="width:400px"><table class="t" style="--c1:150px"><tr><th>Usuarios a la vez</th><th>Mensajes que el servidor entrega por segundo<small>PC, servidor original</small></th></tr>
+  ${TESTS.slice(0,6).map(([t,u])=>`<tr><td>${nf(u)}</td><td><b>${nf(A('before','pc',t).msgsOut)}</b></td></tr>`).join('')}</table>
+ <div class="takeaway" style="margin-top:14px">En una sala de 30 personas, <b>cada trazo se reenvía 29 veces</b>, una por persona. Todo ese reenvío lo hace el mismo hilo.</div></div></div>`);
+
+// 3 contexto: entornos
+slide('Contexto','Cinco entornos, el mismo servidor','Mismo código, misma base de datos y la misma carga en todos. Solo cambia la máquina.',
+`<table class="t" style="--c1:150px"><tr><th></th>${ENVS.map(e=>`<th>${e[1]}</th>`).join('')}</tr>
+ <tr><td>CPU</td><td>Core Ultra 5 125H<small>4 núcleos rápidos, 4,5 GHz</small></td><td>Los del PC<small>techo de 2 CPU</small></td><td>Los del PC<small>techo de 1 CPU</small></td><td>t3.small<small>1 núcleo físico, 2,5 GHz</small></td><td>t3.small<small>al 20 % sin créditos</small></td></tr>
+ <tr><td>Memoria</td><td>15 GB</td><td>512 MB</td><td>512 MB</td><td>1,9 GB</td><td>1,9 GB</td></tr>
+ <tr><td>Disco</td><td>NVMe local</td><td>NVMe local</td><td>NVMe local</td><td>Por red</td><td>Por red</td></tr>
+ <tr><td>Equivalente AWS</td><td>c7i.2xlarge</td><td>Fargate 2 vCPU · 4 GB</td><td>Fargate 1 vCPU · 2 GB</td><td>t3.small</td><td>t3.small</td></tr>
+ <tr><td>Costo al mes</td><td><b>USD 265,86</b><small>en casa: ~17.600 COP de luz</small></td><td><b>USD 75,73</b></td><td><b>USD 39,69</b></td><td><b>USD 20,43</b><small>+ extra de CPU</small></td><td><b>USD 20,43</b></td></tr></table>
+ <div class="row" style="margin-top:18px"><div class="card" style="flex:1"><h3>Cómo se midió</h3><p>Un medidor lee cada segundo CPU, memoria, disco y red desde el sistema operativo. El simulador mide los tiempos del lado del usuario, en otros núcleos u otra máquina.</p></div>
+ <div class="card" style="flex:1"><h3>De dónde salen los costos</h3><p>Equivalente más cercano en AWS: Virginia, 8-nov-2026, 730 h al mes, sin base de datos. Los núcleos del c7i son más lentos que los del portátil.</p></div></div>`);
+
+// 4 contexto: carga
+slide('Contexto','Cómo se genera la carga','Cada prueba: 2 min de llegada, 30 s de estabilización y <b>10 min medidos</b>. Antes de cada una se reinicia el servidor y se restaura la base. Se reportan medianas de las repeticiones.',
+`<div class="row" style="align-items:flex-start"><div style="flex:1">
+ <table class="t mini" style="--c1:150px"><tr><th>Sala</th><th>Personas</th><th>% de salas</th></tr>
+  ${[['Individual','1',45],['Parejas o tríos','2–3',30],['Equipos','4–8',18],['Talleres','10–15',5],['Clases','25–35',2]].map(([n,p,v])=>`<tr><td>${n}</td><td>${p}</td><td>${v} %</td></tr>`).join('')}</table>
+ <p class="note2">Cada sala dura de 15 a 50 min; al cerrar se abre otra, así el número de usuarios se mantiene.</p>
+ <table class="t mini" style="--c1:150px;margin-top:10px"><tr><th>Cada persona envía</th><th>Cada</th></tr>
+  <tr><td>Cursor</td><td>45 ms</td></tr><tr><td>Vista previa del trazo</td><td>33 ms</td></tr><tr><td>Ping</td><td>20 s</td></tr></table>
+ <p class="note2">Entran: 52 % con sesión abierta, 35 % invitados, 12 % con login, 1 % crean cuenta.</p></div>
+ <div style="flex:1.15"><table class="t mini" style="--c1:110px"><tr><th>Nivel</th><th>Usuarios a la vez</th><th>Repeticiones</th><th>Representa</th></tr>
+  ${[['Baja',100,3,'un colegio'],['Media',300,3,'universidad mediana'],['Alta',600,3,'universidad grande'],['Capacidad',1000,1,'buscar el límite'],['Capacidad',2000,1,'buscar el límite'],['Capacidad',3000,1,'buscar el límite']].map(([n,u,r,d])=>`<tr><td>${n}</td><td><b>${nf(u)}</b></td><td>${r}</td><td>${d}</td></tr>`).join('')}</table>
+ <table class="t mini" style="--c1:200px;margin-top:14px"><tr><th>Una prueba pasa si…</th><th>Límite</th></tr>
+  <tr><td>REST p95</td><td>&lt; 300 ms</td></tr><tr><td>Login p95</td><td>&lt; 1 s</td></tr><tr><td>Trazo a los demás p95</td><td>&lt; 150 ms</td></tr><tr><td>Ping p99</td><td>&lt; 100 ms</td></tr><tr><td>Errores</td><td>&lt; 1 %</td></tr></table>
+ <p class="note2"><b>p95</b> = el 95 % de las respuestas tarda menos que ese valor.</p></div></div>`,160);
+
+// paso a paso por carga
+const INVALID=(when,k)=>when==='after'&&k==='aws-limited';
+function stepSlide(when,t,sub){
+  const lab=TESTS.find(x=>x[0]===t)[1], aft=when==='after';
+  const sm=(k,key,o)=>{const s=SER(when,k,t),b=aft?SER('before',k,t):null;if(!s)return '';
+    const series=[...(b?[{data:b[key],color:'#b8c2cc',width:1.8,dash:true}]:[]),{data:s[key],color:COL[k],width:2.2}];
+    return lines({w:240,h:130,small:true,ramp:true,series,...o})};
+  const head=k=>{const a=A(when,k,t);if(!a)return '<div></div>';const ok=a.pass===a.n;
+    const pill=INVALID(when,k)?`<span class="pill" style="background:#ece6f2;color:#6d3a9a">no comparable</span>`:`<span class="pill ${ok?'ok':'no'}">${ok?'✓ pasa':'✕ falla'}</span>`;
+    return `<div class="gh">${dot(k)}${envName(k)}<div style="margin-top:4px">${pill}</div><small>${INVALID(when,k)?'casi sin CPU robada':shortReason(a)||'&nbsp;'}</small></div>`};
+  const row=(label,fn,fmt,bad)=>`<div class="gk">${label}</div>${ENVS.map(([k])=>{const a=A(when,k,t),b=aft?A('before',k,t):null;const v=a?fn(a):null;
+    const isBad=v!=null&&bad&&bad(v,k);
+    return `<div class="mc">${b?`<span class="was">${fmt(fn(b))} →</span> `:''}<b style="${isBad?'color:var(--bad)':''}">${a?fmt(v):'—'}${stopped(a)?'†':''}</b></div>`}).join('')}`;
+  const msf=v=>ms(v)+(v>=15000?'':' ms');
+  slide(aft?'Servidor mejorado':'Servidor original',`${nf(lab)} usuarios${aft?' · servidor mejorado':''}`,sub,
+  `<div class="g">
+   <div></div>${ENVS.map(([k])=>head(k)).join('')}
+   <div class="gk">Hilo JS<small>% de un núcleo, minuto a minuto</small></div>${ENVS.map(([k])=>`<div class="panel" style="padding:3px">${sm(k,'js',{ymaxFix:100,thr:{v:100,t:''},yfmt:v=>nf(v)})}</div>`).join('')}
+   <div class="gk">Ping p95<small>ms, escala log${aft?'<br>gris: antes':''}</small></div>${ENVS.map(([k])=>`<div class="panel" style="padding:3px">${sm(k,'pingP95',{ylog:true,thr:{v:100,t:''}})}</div>`).join('')}
+   ${row('Hilo JS prom.',a=>a.jsAvg,v=>v==null?'—':nf(v,0)+' %',v=>v>=90)}
+   ${row('CPU máquina',a=>a.cpuAvg,v=>v==null?'—':nf(v,0)+' %')}
+   ${row('RAM pico',a=>a.rssMax,v=>v==null?'—':nf(v,0)+' MB',(v,k)=>k.startsWith('docker')&&v>=460)}
+   ${row('REST p95',a=>a.rest_p95,msf,v=>v>300)}
+   ${row('Ping p99',a=>a.ping_p99,msf,v=>v>100)}
+   ${row('Errores',a=>a.err,v=>v==null?'—':nf(Math.min(100,v),1)+' %',v=>v>=1)}
+  </div>`,sub.length>110?150:128);
+}
+const ORIG=[['baja','Todos pasan sin esfuerzo: el núcleo no pasa del 9 % y el ping p99 queda en 2 ms o menos.'],
+ ['media','Todos pasan. AWS ya usa más del doble de núcleo que el PC (23 % contra 9 %) para el mismo trabajo.'],
+ ['alta','Todos pasan, pero AWS gasta 45 % del núcleo contra 18 % del PC. Memoria, REST y ping siguen lejos del límite.'],
+ ['capacidad-1000','Primer quiebre: AWS Limited se queda sin créditos (60 % de CPU robada) y el 80 % de las entradas falla. AWS Unlimited pasa con el núcleo al 74 %.'],
+ ['capacidad-2000','Solo PC y Docker 2 CPU pasan. AWS Unlimited llena el núcleo (97 %); Docker 1 CPU queda congelado por su cuota y el ping p99 sube a 227 ms.'],
+ ['capacidad-3000','Solo el PC pasa, con el núcleo al 79 %. Docker 2 CPU se cae a los 332 s; en los demás la gente no logra entrar.']];
+ORIG.forEach(([t,s])=>stepSlide('before',t,s));
+
+// mejoras
+slide('Mejoras','Cuatro cambios al servidor','El perfil con 3.000 usuarios mostró que casi la mitad del tiempo del hilo se iba en <b>un envío al sistema operativo por cada mensaje y cada persona</b>.',
+`<table class="t roomy" style="--c1:230px;font-size:15.5px"><tr><th>Cambio</th><th style="text-align:left">Antes</th><th style="text-align:left">Ahora</th></tr>
+ <tr><td>1 · Envíos agrupados</td><td style="text-align:left">Un envío por mensaje y por persona</td><td style="text-align:left">Lo que le toca a una persona en el mismo instante sale en un solo envío</td></tr>
+ <tr><td>2 · Preparar una vez</td><td style="text-align:left">El mensaje se serializaba una vez por destinatario</td><td style="text-align:left">Se serializa una sola vez y se reutiliza</td></tr>
+ <tr><td>3 · PIN con HMAC</td><td style="text-align:left">Función lenta que congelaba el hilo al validar el PIN</td><td style="text-align:left">HMAC: microsegundos</td></tr>
+ <tr><td>4 · Argon2id</td><td style="text-align:left">Hash de contraseña costoso en CPU</td><td style="text-align:left">Argon2id según OWASP: ~6 × menos CPU por login</td></tr></table>
+ <div class="row" style="margin-top:18px"><div class="takeaway" style="flex:1"><b>Se repitió la misma campaña</b>, con las mismas cargas, en los mismos entornos. Las siguientes diapositivas muestran en gris el resultado anterior.</div>
+ <div class="takeaway" style="flex:1;background:#f1ecf6"><b style="color:#6d3a9a">AWS Limited no es comparable:</b> la corrida nueva casi no tuvo CPU robada (steal ${nf(A('after','aws-limited','alta').steal,1)} %), así que no agotó sus créditos.</div></div>`);
+
+const NEW=[['baja','Todos pasan. El REST p95 baja en casi todos: PC de 31 a 7 ms, AWS Unlimited de 51 a 17 ms.'],
+ ['media','Todos pasan. AWS Unlimited usa menos núcleo (23 → 19 %) y el REST p95 de los contenedores cae de 30 a 7 ms.'],
+ ['alta','Todos pasan. AWS Unlimited baja de 45 a 31 % del núcleo. La memoria sube en todos (PC: 283 → 424 MB).'],
+ ['capacidad-1000','Todos pasan. AWS Unlimited baja de 74 a 51 % del núcleo y su ping p99 de 53 a 42 ms.'],
+ ['capacidad-2000','Docker 1 CPU ahora pasa. AWS Unlimited ya no tiene errores (15,5 → 0 %), pero su ping p99 queda sobre 100 ms.'],
+ ['capacidad-3000','Solo el PC pasa. AWS Unlimited ya no tiene errores, pero su REST p95 llega a 406 ms. Los Docker se detienen al llenar los 512 MB.']];
+NEW.forEach(([t,s])=>stepSlide('after',t,s));
+
+// respuestas
+{const why={'pc':'Un solo núcleo: 79 % con 3.000 usuarios mientras la máquina está al 17 %',
+ 'docker-2cpu':'Primero el núcleo, luego la memoria: con 3.000 se llenan los 512 MB',
+ 'docker-1cpu':'Su cuota de CPU: con 2.000 queda congelado 128 ms de cada segundo',
+ 'aws-unlimited':'El núcleo: 74 % con 1.000 y 97 % con 2.000',
+ 'aws-limited':'Los créditos: sin ellos AWS le deja el 20 % de la CPU'};
+ const cost={'pc':'USD 265,86','docker-2cpu':'USD 75,73','docker-1cpu':'USD 39,69','aws-unlimited':'USD 20,43 + extra','aws-limited':'USD 20,43'};
+ const kill=k=>{const a=A('before',k,'server-killer');const d=a.died&&a.died.length?Math.min(...a.died):null;return d?`se cae a los ${nf(d)} s`:k==='pc'?`no se cae<small>núcleo al ${nf(a.jsAvg,0)} %, 38 % de errores</small>`:`no se cae<small>ping p99 de ${nf(a.ping_p99/1000,1)} s</small>`};
+slide('Respuestas','¿Dónde se detiene cada entorno?','Capacidad = la carga más alta que pasa junto con todas las menores. Con 6.000 usuarios (10 × la alta) ninguno pasa.',
+`<table class="t roomy" style="--c1:170px;font-size:15px"><tr><th>Entorno</th><th style="width:120px">Aguanta<small>original</small></th><th style="width:120px">Aguanta<small>mejorado</small></th><th style="text-align:left">Qué se agota primero</th><th style="width:170px">Con 6.000</th><th style="width:150px">Costo al mes</th></tr>
+ ${ENVS.map(([k,n])=>`<tr><td>${dot(k)}${n}</td><td><b>${nf(capOf('before',k))}</b></td><td><b>${k==='aws-limited'?'—':nf(capOf('after',k))}</b>${k==='aws-limited'?'<small>no comparable</small>':''}</td><td style="text-align:left">${why[k]}</td><td>${kill(k)}</td><td>${cost[k]}</td></tr>`).join('')}</table>
+ <div class="row" style="margin-top:16px"><div class="takeaway" style="flex:1"><b>¿Dónde espera Shareboard?</b> En un solo núcleo: el que reenvía cada mensaje en tiempo real. Disco y red nunca fueron el límite.</div>
+ <div class="takeaway" style="flex:1"><b>¿Por qué se cae de golpe?</b> Cerca del 100 % del núcleo, cada mensaje espera en la fila de 3 a 32 veces su propio trabajo.</div></div>`);}
+
+// conclusiones
+S.push([`<h1>Conclusiones</h1>
+ <div style="background:#16384f;border-radius:14px;padding:18px 22px;font-size:24px;font-weight:700;margin:18px 0 22px;line-height:1.3">Cuello de botella principal: <span style="color:var(--amber)">el hilo único de Node</span> que reenvía cada mensaje en tiempo real.</div>
+ <div class="row" style="gap:28px"><ul style="flex:1.4;font-size:18.5px;line-height:1.5;padding-left:20px;display:flex;flex-direction:column;gap:8px">
+  <li>Más núcleos no ayudan; <b>un núcleo más rápido sí</b>. El PC aguanta 3 × más que AWS.</li>
+  <li>Disco y red nunca fueron el límite.</li>
+  <li>Cerca del 100 % del núcleo, la espera pasa de 3 × a 32 × el trabajo: los tiempos se disparan de golpe.</li>
+  <li>El servidor mejorado dejó AWS sin errores con 2.000 y 3.000, y subió Docker 1 CPU de 1.000 a 2.000.</li>
+  <li>Nuevo límite: <b>la memoria</b> (+30–80 %).</li></ul>
+ <div class="col" style="flex:1"><div style="background:#16384f;border-radius:14px;padding:16px 18px"><div class="k" style="color:#9db4c8">Recomendación</div><div style="font-family:'Source Serif 4',serif;font-size:44px;font-weight:700;color:var(--amber);line-height:1.1;margin-top:4px">USD 20,43/mes</div><div style="font-size:15px;color:#cadcfc;margin-top:6px">t3.small Limited para 300 usuarios; Unlimited (~USD 5 más) para 600.</div></div>
+ <div style="background:#16384f;border-radius:14px;padding:16px 18px"><div class="k" style="color:#9db4c8">Se descarta</div><div style="font-size:15px;color:#e3ecf5;margin-top:6px;line-height:1.45">Docker 1 CPU (falla por su cuota) · AWS Limited por encima de 300 · el PC en producción (sin IP fija ni 24 h).</div></div>
+ <div style="font-size:14px;color:#cadcfc;line-height:1.45"><b style="color:#fff">Siguiente:</b> contenedores de 1 GB, modo multiproceso y repetir AWS Limited sin créditos.</div></div></div>`,'dark','Conclusiones']);
+
+/* ---------- render y navegación ---------- */
+const stage=document.getElementById('stage');
+stage.innerHTML=S.map(([html,cls,secName],i)=>{const dark=cls==='dark';const sec=dark?(secName||''):cls;
+ return `<section class="slide${dark?' dark':''}">${sec&&!dark?`<div class="sec">${sec}</div>`:''}${html}<div class="foot"><span>Shareboard · pruebas de rendimiento</span><span>${i+1} / ${S.length}</span></div></section>`}).join('');
+const slides=[...stage.children];
+let cur=Math.max(0,Math.min(slides.length-1,(parseInt(location.hash.slice(1))||1)-1));
+function show(i){cur=Math.max(0,Math.min(slides.length-1,i));slides.forEach((s,j)=>s.classList.toggle('active',j===cur));history.replaceState(null,'','#'+(cur+1))}
+function fit(){const k=Math.min(innerWidth/1280,innerHeight/720);stage.style.transform=`translate(-50%,-50%) scale(${k})`}
+addEventListener('resize',fit);fit();show(cur);
+addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' '].includes(e.key))show(cur+1);else if(['ArrowLeft','PageUp'].includes(e.key))show(cur-1);else if(e.key==='Home')show(0);else if(e.key==='End')show(slides.length-1);else if(e.key==='f'||e.key==='F')document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()});
+stage.addEventListener('click',e=>show(e.clientX>innerWidth/2?cur+1:cur-1));
+</script>
+</body>
+</html>
